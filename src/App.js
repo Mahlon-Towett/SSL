@@ -4,7 +4,7 @@ import Controls from './components/Controls';
 import { Mic, MicOff } from 'lucide-react';
 
 function App() {
-  const [currentSign, setCurrentSign] = useState('hello');
+  const [currentSign, setCurrentSign] = useState('Hello');
   const [isPlaying, setIsPlaying] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
@@ -13,22 +13,179 @@ function App() {
   const [currentQueueIndex, setCurrentQueueIndex] = useState(0);
   const [isTranslating, setIsTranslating] = useState(false);
   const [speechSupported, setSpeechSupported] = useState(false);
+  const [showAllSigns, setShowAllSigns] = useState(false);
   
   const recognitionRef = useRef(null);
   const queueProcessingRef = useRef(false);
-  const videoStateRef = useRef({ isPlaying: false, currentSign: 'hello' });
-  const signs = ['hello', 'thank_you', 'Beautiful', 'Better', 'Happy', 'good', 'name', 'Welcome'];
+  const videoStateRef = useRef({ isPlaying: false, currentSign: 'Hello' });
 
-  // Speech-to-Sign mapping
+  // Complete list of available signs from your video library
+  const signs = [
+    // Numbers
+    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
+    // Letters A-Z
+    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 
+    'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
+    // Common words
+    'Hello', 'Welcome', 'Thank You', 'Thank', 'Beautiful', 'Better', 'Happy', 'Good', 
+    'Great', 'Name', 'My', 'ME', 'You', 'Your', 'Yourself', 'I', 'We', 'Us', 'They',
+    'This', 'That', 'Those', 'Here', 'There', 'Where', 'What', 'When', 'Why', 'Who',
+    'Which', 'Whose', 'How', 'Time', 'Day', 'Home', 'Work', 'Study', 'Learn', 'Help',
+    'Go', 'Come', 'Stay', 'Walk', 'See', 'Look', 'Talk', 'Say', 'Ask', 'Eat', 'Drink',
+    'Sleep', 'Happy', 'Sad', 'Angry', 'Love', 'Like', 'Want', 'Need', 'Have', 'Do',
+    'Does Not', 'Do Not', 'Cannot', 'Will', 'Can', 'Be', 'Am', 'Is', 'Are', 'Was',
+    'Were', 'Been', 'Have', 'Has', 'Had', 'Get', 'Got', 'Give', 'Take', 'Make',
+    'Put', 'Keep', 'Let', 'Use', 'Try', 'Know', 'Think', 'Feel', 'Find', 'Show',
+    'Turn', 'Start', 'Stop', 'Play', 'Run', 'Sit', 'Stand', 'Open', 'Close', 'Write',
+    'Read', 'Listen', 'Watch', 'Wait', 'Call', 'Meet', 'Leave', 'Stay', 'Move', 'Live',
+    'Die', 'Kill', 'Save', 'Spend', 'Pay', 'Buy', 'Sell', 'Win', 'Lose', 'Send',
+    'Bring', 'Build', 'Break', 'Fix', 'Clean', 'Wash', 'Wear', 'Carry', 'Pull', 'Push'
+  ];
+
+  // Comprehensive Speech-to-Sign mapping with synonyms
   const speechToSignMapping = {
-    'hello': ['hello', 'hi', 'hey', 'greetings', 'good morning', 'good afternoon', 'good evening'],
-    'Welcome': ['welcome', 'welcomed', 'welcoming', 'come in', 'enter'],
-    'Beautiful': ['beautiful', 'pretty', 'gorgeous', 'lovely', 'stunning', 'attractive', 'nice looking'],
+    // Greetings
+    'Hello': ['hello', 'hi', 'hey', 'greetings', 'good morning', 'good afternoon', 'good evening', 'howdy'],
+    'Welcome': ['welcome', 'welcomed', 'welcoming', 'come in', 'enter', 'glad to see you'],
+    'Bye': ['bye', 'goodbye', 'farewell', 'see you later', 'take care', 'until next time'],
+    
+    // Emotions & Descriptions
+    'Beautiful': ['beautiful', 'pretty', 'gorgeous', 'lovely', 'stunning', 'attractive', 'nice looking', 'handsome'],
+    'Happy': ['happy', 'joyful', 'cheerful', 'glad', 'pleased', 'delighted', 'excited', 'joy', 'elated'],
+    'Sad': ['sad', 'unhappy', 'depressed', 'down', 'blue', 'melancholy', 'upset'],
+    'Good': ['good', 'great', 'excellent', 'wonderful', 'nice', 'awesome', 'perfect', 'fine', 'amazing'],
     'Better': ['better', 'improved', 'superior', 'enhanced', 'upgraded', 'more good'],
-    'Happy': ['happy', 'joyful', 'cheerful', 'glad', 'pleased', 'delighted', 'excited', 'joy'],
-    'good': ['good', 'great', 'excellent', 'wonderful', 'nice', 'awesome', 'perfect', 'fine'],
-    'name': ['name', 'called', 'my name', 'i am', 'named', 'call me'],
-    'thank_you': ['thank you', 'thanks', 'thank', 'appreciate', 'grateful', 'thank you very much']
+    'Best': ['best', 'greatest', 'finest', 'top', 'supreme', 'ultimate'],
+    'Pretty': ['pretty', 'beautiful', 'attractive', 'lovely', 'cute'],
+    'Safe': ['safe', 'secure', 'protected', 'out of danger'],
+    
+    // Personal & Identity
+    'Name': ['name', 'called', 'my name is', 'i am', 'named', 'call me'],
+    'My': ['my', 'mine', 'belonging to me'],
+    'ME': ['me', 'myself', 'i'],
+    'You': ['you', 'yourself'],
+    'Your': ['your', 'yours', 'belonging to you'],
+    'I': ['i', 'me', 'myself'],
+    'We': ['we', 'us', 'ourselves'],
+    'They': ['they', 'them', 'themselves'],
+    
+    // Gratitude
+    'Thank You': ['thank you', 'thanks', 'thank you very much', 'much obliged', 'appreciated'],
+    'Thank': ['thank', 'appreciate', 'grateful', 'thanks'],
+    
+    // Questions & Demonstratives  
+    'What': ['what', 'which thing'],
+    'Where': ['where', 'which place', 'what location'],
+    'When': ['when', 'what time', 'at what time'],
+    'Why': ['why', 'what reason', 'how come'],
+    'Who': ['who', 'which person', 'what person'],
+    'How': ['how', 'in what way', 'by what means'],
+    'This': ['this', 'this one', 'this thing'],
+    'That': ['that', 'that one', 'that thing'],
+    
+    // Actions
+    'Go': ['go', 'leave', 'depart', 'move', 'travel'],
+    'Come': ['come', 'arrive', 'approach', 'get here'],
+    'Help': ['help', 'assist', 'aid', 'support', 'lend a hand'],
+    'Work': ['work', 'job', 'labor', 'employment', 'career'],
+    'Study': ['study', 'learn', 'research', 'examine'],
+    'Learn': ['learn', 'study', 'discover', 'find out'],
+    'Eat': ['eat', 'consume', 'dine', 'have a meal'],
+    'Walk': ['walk', 'stroll', 'step', 'move on foot'],
+    'Talk': ['talk', 'speak', 'communicate', 'converse', 'chat'],
+    'See': ['see', 'look', 'view', 'observe', 'watch'],
+    'Do': ['do', 'perform', 'execute', 'carry out'],
+    'Can': ['can', 'able to', 'capable of'],
+    'Will': ['will', 'going to', 'shall'],
+    
+    // Locations & Time
+    'Home': ['home', 'house', 'residence', 'dwelling'],
+    'College': ['college', 'university', 'school', 'campus'],
+    'Time': ['time', 'hour', 'minute', 'clock'],
+    'Day': ['day', 'today', 'daily'],
+    'Now': ['now', 'currently', 'at this moment', 'right now'],
+    
+    // Technology
+    'Computer': ['computer', 'pc', 'laptop', 'desktop'],
+    'Television': ['television', 'tv', 'telly'],
+    
+    // Negatives & Modifiers
+    'Not': ['not', 'no', 'never'],
+    'Cannot': ['cannot', 'can not', 'unable to', 'impossible'],
+    'Does Not': ['does not', 'doesn\'t', 'does not do'],
+    'Do Not': ['do not', 'don\'t'],
+    'Without': ['without', 'lacking', 'missing'],
+    'Against': ['against', 'opposed to', 'contrary to'],
+    
+    // More actions
+    'Keep': ['keep', 'maintain', 'hold', 'retain'],
+    'Change': ['change', 'modify', 'alter', 'transform'],
+    'Finish': ['finish', 'complete', 'end', 'conclude'],
+    'Stay': ['stay', 'remain', 'wait', 'stop'],
+    'Wash': ['wash', 'clean', 'bathe'],
+    'Fight': ['fight', 'battle', 'combat', 'struggle'],
+    'Laugh': ['laugh', 'giggle', 'chuckle'],
+    'Sing': ['sing', 'vocalize', 'chant'],
+    
+    // Quantity & Comparison
+    'All': ['all', 'everything', 'every', 'entire'],
+    'More': ['more', 'additional', 'extra'],
+    'Also': ['also', 'too', 'as well', 'additionally'],
+    'Again': ['again', 'once more', 'repeat'],
+    'Alone': ['alone', 'by myself', 'solo', 'isolated'],
+    'Busy': ['busy', 'occupied', 'working'],
+    
+    // Conjunctions & Prepositions
+    'And': ['and', 'plus', 'with'],
+    'But': ['but', 'however', 'though'],
+    'So': ['so', 'therefore', 'thus'],
+    'At': ['at', 'located at'],
+    'On': ['on', 'upon', 'above'],
+    'From': ['from', 'out of', 'away from'],
+    'To': ['to', 'towards', 'in direction of'],
+    'With': ['with', 'alongside', 'together with'],
+    'Of': ['of', 'belonging to'],
+    'Out': ['out', 'outside', 'away'],
+    
+    // Professional & Skills
+    'Engineer': ['engineer', 'engineering', 'technical expert'],
+    'Language': ['language', 'speech', 'communication'],
+    'Sign': ['sign', 'gesture', 'signal'],
+    'Words': ['words', 'vocabulary', 'terms'],
+    'Sound': ['sound', 'audio', 'noise'],
+    'Type': ['type', 'keyboard', 'writing'],
+    'Invent': ['invent', 'create', 'innovate'],
+    
+    // Materials & Objects
+    'Gold': ['gold', 'golden', 'precious metal'],
+    'Glitter': ['glitter', 'sparkle', 'shine'],
+    'Hand': ['hand', 'hands'],
+    'Hands': ['hands', 'both hands'],
+    
+    // Abstract concepts
+    'World': ['world', 'earth', 'globe', 'planet'],
+    'Way': ['way', 'method', 'path', 'manner'],
+    'Age': ['age', 'years old', 'how old'],
+    'Distance': ['distance', 'far', 'length'],
+    'Self': ['self', 'myself', 'own'],
+    'God': ['god', 'deity', 'divine'],
+    'Wrong': ['wrong', 'incorrect', 'mistake', 'error'],
+    'Right': ['right', 'correct', 'proper'],
+    'Whole': ['whole', 'entire', 'complete', 'full'],
+    
+    // Website/Tech specific
+    'Homepage': ['homepage', 'main page', 'home page', 'website'],
+    'Next': ['next', 'following', 'after'],
+    'Before': ['before', 'prior', 'earlier'],
+    'After': ['after', 'following', 'later'],
+    
+    // Pronouns & Determiners
+    'It': ['it', 'the thing'],
+    'Her': ['her', 'hers', 'she'],
+    'His': ['his', 'he', 'him'],
+    'Our': ['our', 'ours', 'belonging to us'],
+    'Whose': ['whose', 'belonging to whom'],
+    'Which': ['which', 'what one', 'that one']
   };
 
   // Keep video state ref updated
@@ -100,7 +257,7 @@ function App() {
     };
   }, [isListening]);
 
-  // STABLE: Process spoken text - prevent rapid state changes
+  // ENHANCED: Process spoken text with name detection and letter spelling
   const processSpokenText = useCallback((spokenText) => {
     // Skip if already processing queue
     if (queueProcessingRef.current) {
@@ -112,14 +269,65 @@ function App() {
     
     const foundSigns = [];
 
-    // Find matching signs
-    for (const [signKey, variants] of Object.entries(speechToSignMapping)) {
-      const found = variants.some(variant => 
-        spokenText.includes(variant.toLowerCase())
-      );
-      
-      if (found && !foundSigns.includes(signKey)) {
-        foundSigns.push(signKey);
+    // SPECIAL CASE: Name detection and spelling
+    // Patterns: "my name is [name]", "i am [name]", "call me [name]"
+    const namePatterns = [
+      /my name is (\w+)/i,
+      /i am (\w+)/i,
+      /call me (\w+)/i,
+      /i'm (\w+)/i,
+      /this is (\w+)/i
+    ];
+
+    let nameDetected = false;
+    for (const pattern of namePatterns) {
+      const match = spokenText.match(pattern);
+      if (match && match[1]) {
+        const name = match[1].toLowerCase();
+        console.log('Name detected:', name);
+        
+        // Create sequence: "My" -> "Name" -> letter by letter
+        const nameSequence = ['My', 'Name'];
+        
+        // Add each letter of the name
+        for (const letter of name.toUpperCase()) {
+          if (letter.match(/[A-Z]/)) { // Only add valid letters
+            nameSequence.push(letter);
+          }
+        }
+        
+        foundSigns.push(...nameSequence);
+        nameDetected = true;
+        break;
+      }
+    }
+
+    // REGULAR WORD PROCESSING (only if no name was detected)
+    if (!nameDetected) {
+      // Check for regular word matches
+      for (const [signKey, variants] of Object.entries(speechToSignMapping)) {
+        const found = variants.some(variant => 
+          spokenText.toLowerCase().includes(variant.toLowerCase())
+        );
+        
+        if (found && !foundSigns.includes(signKey)) {
+          foundSigns.push(signKey);
+        }
+      }
+
+      // ENHANCED: Check for individual letters (spelling mode)
+      // If someone says "spell cat" or individual letters
+      const letterMatches = spokenText.match(/\b[a-z]\b/gi);
+      if (letterMatches && letterMatches.length > 0) {
+        // Only add letters if no regular words were found
+        if (foundSigns.length === 0) {
+          letterMatches.forEach(letter => {
+            const upperLetter = letter.toUpperCase();
+            if (!foundSigns.includes(upperLetter)) {
+              foundSigns.push(upperLetter);
+            }
+          });
+        }
       }
     }
 
@@ -127,7 +335,7 @@ function App() {
       console.log('Found signs to translate:', foundSigns);
       startTranslationSequence(foundSigns);
     } else {
-      console.log('No matching signs found');
+      console.log('No matching signs found for:', spokenText);
     }
   }, []);
 
@@ -410,7 +618,18 @@ function App() {
 
         {/* Instructions */}
         <div style={{ color: 'white', fontSize: '14px', opacity: 0.8 }}>
-          💡 Try saying: "Hello", "Welcome", "Thank you", "Beautiful", "Better", "Happy", "Good", "My name"
+          <div style={{ marginBottom: '10px' }}>
+            💡 <strong>Basic Words:</strong> "Hello", "Welcome", "Thank you", "Beautiful", "Happy", "Good", "Help"
+          </div>
+          <div style={{ marginBottom: '10px' }}>
+            👤 <strong>Introduce Yourself:</strong> "My name is John", "I am Sarah", "Call me Mike"
+          </div>
+          <div style={{ marginBottom: '10px' }}>
+            🔤 <strong>Spell Words:</strong> Say individual letters like "A B C" or "spell cat"
+          </div>
+          <div>
+            ❓ <strong>Questions:</strong> "What", "Where", "When", "Why", "Who", "How"
+          </div>
         </div>
       </div>
       
@@ -444,26 +663,139 @@ function App() {
         {/* Manual Sign Selection */}
         <div style={{ marginTop: '20px' }}>
           <h3 style={{ color: 'white', marginBottom: '15px' }}>Manual Sign Selection:</h3>
-          <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap' }}>
-            {signs.map(sign => (
-              <button
-                key={sign}
-                onClick={() => selectSign(sign)}
-                style={{
-                  padding: '10px 20px',
-                  backgroundColor: currentSign === sign ? '#007bff' : '#6c757d',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '15px',
-                  cursor: 'pointer',
-                  fontSize: '14px',
-                  transition: 'all 0.3s ease'
-                }}
-              >
-                {sign.replace('_', ' ').toUpperCase()}
-              </button>
-            ))}
+          
+          {/* Popular Words Section */}
+          <div style={{ marginBottom: '15px' }}>
+            <h4 style={{ color: 'white', fontSize: '16px', marginBottom: '10px' }}>Popular Words:</h4>
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', flexWrap: 'wrap' }}>
+              {['Hello', 'Thank You', 'Welcome', 'Beautiful', 'Happy', 'Good', 'Help', 'Name', 'You', 'ME'].map(sign => (
+                <button
+                  key={sign}
+                  onClick={() => selectSign(sign)}
+                  style={{
+                    padding: '8px 16px',
+                    backgroundColor: currentSign === sign ? '#007bff' : '#28a745',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '15px',
+                    cursor: 'pointer',
+                    fontSize: '12px',
+                    transition: 'all 0.3s ease'
+                  }}
+                >
+                  {sign}
+                </button>
+              ))}
+            </div>
           </div>
+
+          {/* Letters Section */}
+          <div style={{ marginBottom: '15px' }}>
+            <h4 style={{ color: 'white', fontSize: '16px', marginBottom: '10px' }}>Letters (A-Z):</h4>
+            <div style={{ display: 'flex', gap: '5px', justifyContent: 'center', flexWrap: 'wrap' }}>
+              {['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z'].map(letter => (
+                <button
+                  key={letter}
+                  onClick={() => selectSign(letter)}
+                  style={{
+                    width: '35px',
+                    height: '35px',
+                    backgroundColor: currentSign === letter ? '#007bff' : '#6c757d',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    transition: 'all 0.3s ease'
+                  }}
+                >
+                  {letter}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Numbers Section */}
+          <div style={{ marginBottom: '15px' }}>
+            <h4 style={{ color: 'white', fontSize: '16px', marginBottom: '10px' }}>Numbers (0-9):</h4>
+            <div style={{ display: 'flex', gap: '5px', justifyContent: 'center', flexWrap: 'wrap' }}>
+              {['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'].map(number => (
+                <button
+                  key={number}
+                  onClick={() => selectSign(number)}
+                  style={{
+                    width: '35px',
+                    height: '35px',
+                    backgroundColor: currentSign === number ? '#007bff' : '#17a2b8',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '8px',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    transition: 'all 0.3s ease'
+                  }}
+                >
+                  {number}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Show More/Less Button */}
+          <button
+            onClick={() => setShowAllSigns(!showAllSigns)}
+            style={{
+              padding: '8px 20px',
+              backgroundColor: '#ffc107',
+              color: '#000',
+              border: 'none',
+              borderRadius: '15px',
+              cursor: 'pointer',
+              fontSize: '14px',
+              marginBottom: '15px'
+            }}
+          >
+            {showAllSigns ? 'Show Less' : 'Show All Signs'}
+          </button>
+
+          {/* All Signs Section (Collapsible) */}
+          {showAllSigns && (
+            <div>
+              <h4 style={{ color: 'white', fontSize: '16px', marginBottom: '10px' }}>All Available Signs:</h4>
+              <div style={{ 
+                display: 'flex', 
+                gap: '6px', 
+                justifyContent: 'center', 
+                flexWrap: 'wrap',
+                maxHeight: '200px',
+                overflowY: 'auto',
+                padding: '10px',
+                background: 'rgba(0,0,0,0.2)',
+                borderRadius: '10px'
+              }}>
+                {signs.filter(sign => 
+                  !['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'Hello', 'Thank You', 'Welcome', 'Beautiful', 'Happy', 'Good', 'Help', 'Name', 'You', 'ME'].includes(sign)
+                ).map(sign => (
+                  <button
+                    key={sign}
+                    onClick={() => selectSign(sign)}
+                    style={{
+                      padding: '6px 12px',
+                      backgroundColor: currentSign === sign ? '#007bff' : '#6c757d',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '12px',
+                      cursor: 'pointer',
+                      fontSize: '11px',
+                      transition: 'all 0.3s ease'
+                    }}
+                  >
+                    {sign}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </div>
       
@@ -478,14 +810,22 @@ function App() {
         borderRadius: '10px',
         display: 'inline-block'
       }}>
-        <h4 style={{ marginBottom: '10px' }}>AI Animation Engine Features:</h4>
+        <h4 style={{ marginBottom: '15px' }}>AI Translation Engine Capabilities:</h4>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px', textAlign: 'left' }}>
-          <div>✓ Real-time Speech Recognition</div>
-          <div>✓ Intelligent Gesture Mapping</div>
-          <div>✓ Multi-pose Animation Sequence</div>
-          <div>✓ Natural Language Processing</div>
-          <div>✓ Dynamic Character Animation</div>
-          <div>✓ Advanced Motion Synthesis: 30fps</div>
+          <div>✓ 150+ Sign Vocabulary</div>
+          <div>✓ Name Spelling Recognition</div>
+          <div>✓ Real-time Speech Processing</div>
+          <div>✓ Multi-word Sequence Translation</div>
+          <div>✓ A-Z Fingerspelling Support</div>
+          <div>✓ 0-9 Number Recognition</div>
+          <div>✓ Context-aware Word Mapping</div>
+          <div>✓ Synonym Recognition Engine</div>
+          <div>✓ Smooth Animation Transitions</div>
+          <div>✓ Professional 3D Rendering</div>
+        </div>
+        <div style={{ marginTop: '15px', fontSize: '12px', opacity: 0.7 }}>
+          <strong>Advanced Features:</strong> Letter-by-letter name spelling, Multi-pattern speech recognition, 
+          Queue-based translation system, Professional motion capture animation at 30fps
         </div>
       </div>
     </div>
