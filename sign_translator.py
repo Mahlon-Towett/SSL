@@ -52,11 +52,13 @@ class SignLanguageDataCollector:
         collecting = False
         
         print(f"\n📹 Collecting data for signs: {sign_labels}")
+        print(f"\n🎯 Total signs to collect: {len(sign_labels)}")
         print("\nInstructions:")
         print("  SPACE - Start/Stop collecting")
         print("  N - Next sign")
+        print("  P - Previous sign")
         print("  Q - Quit")
-        print("-" * 40)
+        print("-" * 50)
         
         while current_sign_idx < len(sign_labels):
             ret, frame = cap.read()
@@ -79,7 +81,7 @@ class SignLanguageDataCollector:
             
             # Create info overlay
             overlay = frame.copy()
-            cv2.rectangle(overlay, (0, 0), (640, 140), (0, 0, 0), -1)
+            cv2.rectangle(overlay, (0, 0), (640, 160), (0, 0, 0), -1)
             frame = cv2.addWeighted(overlay, 0.3, frame, 0.7, 0)
             
             # Display status
@@ -92,11 +94,19 @@ class SignLanguageDataCollector:
                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
             cv2.putText(frame, f"Progress: {samples_collected}/{samples_per_sign}", 
                        (20, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+            cv2.putText(frame, f"Sign {current_sign_idx + 1} of {len(sign_labels)}", 
+                       (20, 140), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 200, 200), 2)
             
             # Progress bar
             bar_width = int((samples_collected / samples_per_sign) * 400)
             cv2.rectangle(frame, (220, 90), (620, 115), (100, 100, 100), 2)
             cv2.rectangle(frame, (222, 92), (222 + bar_width, 113), (0, 255, 0), -1)
+            
+            # Overall progress
+            overall_progress = (current_sign_idx * samples_per_sign + samples_collected) / (len(sign_labels) * samples_per_sign)
+            overall_bar = int(overall_progress * 400)
+            cv2.rectangle(frame, (220, 120), (620, 135), (100, 100, 100), 2)
+            cv2.rectangle(frame, (222, 122), (222 + overall_bar, 133), (255, 255, 0), -1)
             
             # Collect data if in collecting mode
             if collecting and landmarks_data and samples_collected < samples_per_sign:
@@ -133,6 +143,8 @@ class SignLanguageDataCollector:
                         print(f"🔴 Recording '{current_sign}'...")
                     else:
                         print(f"⏸️  Paused at {samples_collected} samples")
+                else:
+                    print("⚠️  No hand detected! Please show your hand to start recording.")
             elif key == ord('n'):  # Next sign
                 if samples_collected >= 10:  # Minimum samples required
                     current_sign_idx += 1
@@ -142,6 +154,12 @@ class SignLanguageDataCollector:
                         print(f"\n➡️  Next sign: {sign_labels[current_sign_idx]}")
                 else:
                     print(f"⚠️  Need at least 10 samples! Currently: {samples_collected}")
+            elif key == ord('p'):  # Previous sign
+                if current_sign_idx > 0:
+                    current_sign_idx -= 1
+                    samples_collected = 0
+                    collecting = False
+                    print(f"\n⬅️  Previous sign: {sign_labels[current_sign_idx]}")
         
         cap.release()
         cv2.destroyAllWindows()
@@ -155,13 +173,15 @@ class SignLanguageDataCollector:
 # ============================================
 
 class SignLanguageClassifier:
-    """Simple and reliable classifier using Random Forest"""
+    """Enhanced classifier with better performance for more signs"""
     
     def __init__(self):
-        # Random Forest is robust and works well for this task
+        # Enhanced Random Forest for better performance with more classes
         self.model = RandomForestClassifier(
-            n_estimators=100,
-            max_depth=10,
+            n_estimators=200,  # Increased for better performance
+            max_depth=15,      # Increased depth
+            min_samples_split=5,
+            min_samples_leaf=2,
             random_state=42,
             n_jobs=-1  # Use all CPU cores
         )
@@ -169,7 +189,7 @@ class SignLanguageClassifier:
         self.idx_to_label = {}
         
     def prepare_data(self, collected_data, sign_labels):
-        """Convert collected data to training arrays"""
+        """Convert collected data to training arrays with data validation"""
         X = []
         y = []
         
@@ -177,23 +197,36 @@ class SignLanguageClassifier:
         self.label_to_idx = {label: idx for idx, label in enumerate(sign_labels)}
         self.idx_to_label = {idx: label for label, idx in self.label_to_idx.items()}
         
+        # Count samples per sign
+        sign_counts = {}
         for sample in collected_data:
+            sign = sample['sign']
+            sign_counts[sign] = sign_counts.get(sign, 0) + 1
             X.append(sample['landmarks'])
-            y.append(self.label_to_idx[sample['sign']])
+            y.append(self.label_to_idx[sign])
+        
+        # Print data distribution
+        print(f"\n📊 Data Distribution:")
+        for sign, count in sorted(sign_counts.items()):
+            print(f"  {sign}: {count} samples")
         
         return np.array(X), np.array(y)
     
     def train(self, X, y, test_size=0.2):
-        """Train the model with train/test split"""
+        """Train the model with enhanced evaluation"""
         # Split the data
         X_train, X_test, y_train, y_test = train_test_split(
             X, y, test_size=test_size, random_state=42, stratify=y
         )
         
-        print(f"Training on {len(X_train)} samples...")
-        print(f"Testing on {len(X_test)} samples...")
+        print(f"\n🎯 Training Details:")
+        print(f"  Training samples: {len(X_train)}")
+        print(f"  Testing samples:  {len(X_test)}")
+        print(f"  Number of signs:  {len(np.unique(y))}")
+        print(f"  Features per sample: {X.shape[1]}")
         
         # Train the model
+        print("\n🔄 Training model...")
         self.model.fit(X_train, y_train)
         
         # Evaluate
@@ -207,6 +240,16 @@ class SignLanguageClassifier:
         print(f"  Training Accuracy: {train_acc:.1%}")
         print(f"  Testing Accuracy:  {test_acc:.1%}")
         
+        # Feature importance
+        feature_importance = self.model.feature_importances_
+        print(f"  Top feature importance: {np.max(feature_importance):.3f}")
+        
+        # Per-class accuracy
+        from sklearn.metrics import classification_report
+        print(f"\n📈 Detailed Performance:")
+        target_names = [self.idx_to_label[i] for i in range(len(self.idx_to_label))]
+        print(classification_report(y_test, test_pred, target_names=target_names, zero_division=0))
+        
         return train_acc, test_acc
     
     def predict(self, landmarks):
@@ -217,6 +260,17 @@ class SignLanguageClassifier:
         confidence = proba[class_idx]
         
         return self.idx_to_label[class_idx], confidence
+    
+    def predict_top_k(self, landmarks, k=3):
+        """Get top-k predictions with confidence scores"""
+        proba = self.model.predict_proba([landmarks])[0]
+        top_indices = np.argsort(proba)[::-1][:k]
+        
+        predictions = []
+        for idx in top_indices:
+            predictions.append((self.idx_to_label[idx], proba[idx]))
+        
+        return predictions
     
     def save_model(self, filepath='sign_model.pkl'):
         """Save the trained model"""
@@ -237,13 +291,14 @@ class SignLanguageClassifier:
         self.label_to_idx = model_data['label_to_idx']
         self.idx_to_label = model_data['idx_to_label']
         print(f"📂 Model loaded from {filepath}")
+        print(f"   Available signs: {list(self.label_to_idx.keys())}")
 
 # ============================================
 # PART 3: REAL-TIME RECOGNITION
 # ============================================
 
 class SignLanguageRecognizer:
-    """Real-time sign language recognition with enhanced UI"""
+    """Enhanced real-time sign language recognition"""
     
     def __init__(self, classifier):
         self.classifier = classifier
@@ -256,11 +311,12 @@ class SignLanguageRecognizer:
         )
         self.mp_drawing = mp.solutions.drawing_utils
         
-        # For smoothing predictions
-        self.prediction_history = deque(maxlen=15)
+        # Enhanced smoothing and prediction
+        self.prediction_history = deque(maxlen=20)
         self.recognized_text = []
         self.last_sign = None
         self.last_sign_time = time.time()
+        self.confidence_threshold = 0.7
         
     def extract_landmarks(self, image):
         """Extract hand landmarks"""
@@ -278,17 +334,23 @@ class SignLanguageRecognizer:
     def run_recognition(self):
         """Run real-time recognition with enhanced UI"""
         cap = cv2.VideoCapture(0)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 800)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 600)
         
-        print("\n" + "="*50)
-        print("🎥 SIGN LANGUAGE RECOGNITION STARTED")
-        print("="*50)
-        print("\nControls:")
+        print("\n" + "="*60)
+        print("🎥 ENHANCED SIGN LANGUAGE RECOGNITION")
+        print("="*60)
+        print(f"\n🎯 Available Signs ({len(self.classifier.label_to_idx)}):")
+        signs = list(self.classifier.label_to_idx.keys())
+        for i, sign in enumerate(signs, 1):
+            print(f"  {i:2d}. {sign}")
+        
+        print("\n⚙️ Controls:")
         print("  C - Clear text")
         print("  S - Save text to file")
+        print("  T - Toggle confidence threshold")
         print("  Q - Quit")
-        print("-"*50 + "\n")
+        print("-"*60 + "\n")
         
         while True:
             ret, frame = cap.read()
@@ -298,16 +360,16 @@ class SignLanguageRecognizer:
             frame = cv2.flip(frame, 1)
             height, width = frame.shape[:2]
             
-            # Create side panel for information
-            panel_width = 350
+            # Create enhanced side panel
+            panel_width = 400
             info_panel = np.ones((height, panel_width, 3), dtype=np.uint8) * 40
             
             # Extract landmarks
             landmarks, landmarks_visual = self.extract_landmarks(frame)
             
             # Title on main frame
-            cv2.rectangle(frame, (0, 0), (width, 50), (0, 0, 0), -1)
-            cv2.putText(frame, "Sign Language Recognition", (10, 35),
+            cv2.rectangle(frame, (0, 0), (width, 60), (0, 0, 0), -1)
+            cv2.putText(frame, "Enhanced Sign Language Recognition", (10, 40),
                        cv2.FONT_HERSHEY_DUPLEX, 1, (255, 255, 255), 2)
             
             if landmarks is not None:
@@ -318,86 +380,105 @@ class SignLanguageRecognizer:
                     self.mp_drawing.DrawingSpec(color=(255,255,255), thickness=2)
                 )
                 
-                # Get prediction
+                # Get predictions
                 sign, confidence = self.classifier.predict(landmarks)
+                top_predictions = self.classifier.predict_top_k(landmarks, k=3)
                 
                 # Add to history
                 self.prediction_history.append((sign, confidence))
                 
                 # Smooth predictions
-                if len(self.prediction_history) >= 8:
-                    recent = [(s, c) for s, c in self.prediction_history if c > 0.6]
+                if len(self.prediction_history) >= 10:
+                    recent = [(s, c) for s, c in self.prediction_history 
+                             if c > self.confidence_threshold]
                     if recent:
                         signs = [s for s, c in recent]
                         most_common = Counter(signs).most_common(1)
-                        if most_common:
+                        if most_common and len(most_common[0]) > 0:
                             detected_sign = most_common[0][0]
                             
-                            # Add to text if it's stable and new
+                            # Add to text if stable and new
                             current_time = time.time()
                             if (detected_sign != self.last_sign and 
-                                current_time - self.last_sign_time > 1.5):
+                                current_time - self.last_sign_time > 1.8):
                                 self.recognized_text.append(detected_sign)
                                 self.last_sign = detected_sign
                                 self.last_sign_time = current_time
+                                print(f"✅ Added: {detected_sign}")
                 
                 # Display current detection on panel
                 cv2.putText(info_panel, "CURRENT DETECTION", (20, 40),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                 
-                # Sign name with colored background
-                color = (0, 255, 0) if confidence > 0.7 else (0, 165, 255)
-                cv2.rectangle(info_panel, (15, 60), (335, 120), color, -1)
+                # Main prediction with colored background
+                color = (0, 255, 0) if confidence > 0.8 else (0, 165, 255) if confidence > 0.6 else (0, 100, 200)
+                cv2.rectangle(info_panel, (15, 60), (385, 120), color, -1)
                 cv2.putText(info_panel, sign, (30, 100),
-                           cv2.FONT_HERSHEY_DUPLEX, 1.2, (255, 255, 255), 2)
+                           cv2.FONT_HERSHEY_DUPLEX, 1.1, (255, 255, 255), 2)
                 
                 # Confidence bar
-                cv2.putText(info_panel, f"Confidence", (20, 150),
+                cv2.putText(info_panel, "Confidence", (20, 150),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 1)
-                bar_length = int(confidence * 300)
-                cv2.rectangle(info_panel, (20, 160), (320, 180), (100, 100, 100), 2)
+                bar_length = int(confidence * 350)
+                cv2.rectangle(info_panel, (20, 160), (370, 180), (100, 100, 100), 2)
                 cv2.rectangle(info_panel, (22, 162), (22 + bar_length, 178), color, -1)
-                cv2.putText(info_panel, f"{confidence:.0%}", (280, 150),
+                cv2.putText(info_panel, f"{confidence:.0%}", (320, 150),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)
                 
+                # Top 3 predictions
+                cv2.putText(info_panel, "TOP PREDICTIONS", (20, 220),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                
+                y_pos = 250
+                for i, (pred_sign, pred_conf) in enumerate(top_predictions):
+                    cv2.putText(info_panel, f"{i+1}. {pred_sign}", (30, y_pos),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+                    cv2.putText(info_panel, f"{pred_conf:.0%}", (320, y_pos),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
+                    y_pos += 25
+                
                 # Hand indicator
-                cv2.circle(frame, (width - 30, 25), 10, (0, 255, 0), -1)
+                cv2.circle(frame, (width - 30, 35), 12, (0, 255, 0), -1)
             else:
                 cv2.putText(info_panel, "NO HAND DETECTED", (20, 90),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
-                cv2.circle(frame, (width - 30, 25), 10, (0, 0, 255), -1)
+                cv2.circle(frame, (width - 30, 35), 12, (0, 0, 255), -1)
             
             # Display recognized text on panel
-            cv2.putText(info_panel, "RECOGNIZED TEXT", (20, 230),
+            cv2.putText(info_panel, "RECOGNIZED TEXT", (20, 340),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.line(info_panel, (20, 240), (330, 240), (100, 100, 100), 2)
+            cv2.line(info_panel, (20, 350), (380, 350), (100, 100, 100), 2)
             
             # Word wrap text
-            text_y = 270
-            words = self.recognized_text[-20:]  # Last 20 words
+            text_y = 380
+            words = self.recognized_text[-15:]  # Last 15 words
             line = ""
             for word in words:
                 test_line = line + word + " "
-                if len(test_line) > 25:
+                if len(test_line) > 20:
                     if line:
                         cv2.putText(info_panel, line.strip(), (20, text_y),
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 1)
                         text_y += 25
+                        if text_y > height - 60:
+                            break
                     line = word + " "
                 else:
                     line = test_line
             
-            if line:
+            if line and text_y <= height - 60:
                 cv2.putText(info_panel, line.strip(), (20, text_y),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 1)
             
-            # Instructions at bottom
-            cv2.putText(info_panel, "C: Clear | S: Save | Q: Quit", (20, height - 20),
+            # Settings and instructions at bottom
+            cv2.putText(info_panel, f"Threshold: {self.confidence_threshold:.1f}", (20, height - 40),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 150, 150), 1)
+            cv2.putText(info_panel, "C:Clear S:Save T:Threshold Q:Quit", (20, height - 20),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (150, 150, 150), 1)
             
             # Combine frame and panel
             display = np.hstack([frame, info_panel])
-            cv2.imshow('Sign Language Recognition System', display)
+            cv2.imshow('Enhanced Sign Language Recognition', display)
             
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q'):
@@ -407,9 +488,18 @@ class SignLanguageRecognizer:
                 print("🗑️  Text cleared!")
             elif key == ord('s'):
                 if self.recognized_text:
-                    with open('recognized_text.txt', 'w') as f:
+                    timestamp = time.strftime("%Y%m%d_%H%M%S")
+                    filename = f'recognized_text_{timestamp}.txt'
+                    with open(filename, 'w') as f:
                         f.write(' '.join(self.recognized_text))
-                    print(f"💾 Text saved to recognized_text.txt")
+                    print(f"💾 Text saved to {filename}")
+            elif key == ord('t'):
+                # Cycle through confidence thresholds
+                thresholds = [0.5, 0.6, 0.7, 0.8, 0.9]
+                current_idx = thresholds.index(self.confidence_threshold) if self.confidence_threshold in thresholds else 2
+                next_idx = (current_idx + 1) % len(thresholds)
+                self.confidence_threshold = thresholds[next_idx]
+                print(f"🎯 Confidence threshold set to: {self.confidence_threshold:.1f}")
         
         cap.release()
         cv2.destroyAllWindows()
@@ -417,52 +507,89 @@ class SignLanguageRecognizer:
         
         # Print final text
         if self.recognized_text:
-            print("\n" + "="*50)
+            print("\n" + "="*60)
             print("📝 FINAL RECOGNIZED TEXT:")
             print(' '.join(self.recognized_text))
-            print("="*50)
+            print("="*60)
 
 # ============================================
 # MAIN PROGRAM
 # ============================================
 
 def main():
-    """Main execution function"""
+    """Main execution function with enhanced sign set"""
     
-    # Signs to recognize - start simple!
+    # ENHANCED SIGN SET - Original + New Signs
     SIGN_LABELS = [
+        # Original signs
         'HELLO',
-        'THANKS',
+        'THANKS', 
         'YES',
         'NO',
         'PLEASE',
-        'GOOD'
+        'GOOD',
+        
+        # New signs you requested
+        'BEAUTIFUL',
+        'BETTER',
+        'HAPPY',
+        'GREAT',
+        'NAME',
+        'MY',
+        'LOOK',
+        'TALK',
+        'SAY',
+        'ASK',
+        'EAT',
+        'DRINK'
     ]
     
-    print("\n" + "="*60)
-    print(" "*15 + "SIGN LANGUAGE RECOGNITION SYSTEM")
-    print("="*60)
-    print("\n📚 Available Signs:", ', '.join(SIGN_LABELS))
-    print("\n🎯 Choose an option:")
+    print("\n" + "="*70)
+    print(" "*20 + "ENHANCED SIGN LANGUAGE RECOGNITION")
+    print("="*70)
+    print(f"\n📚 Available Signs ({len(SIGN_LABELS)}):")
+    
+    # Display signs in columns
+    for i in range(0, len(SIGN_LABELS), 3):
+        row = SIGN_LABELS[i:i+3]
+        print("  " + "".join(f"{sign:<12}" for sign in row))
+    
+    print(f"\n🎯 Choose an option:")
     print("  1. Collect training data")
     print("  2. Train model") 
     print("  3. Run real-time recognition")
     print("  4. Complete setup (1 + 2 + 3)")
-    print("-"*60)
+    print("  5. Add data to existing dataset")
+    print("-"*70)
     
-    choice = input("\nEnter choice (1-4): ").strip()
+    choice = input("\nEnter choice (1-5): ").strip()
     
-    if choice in ['1', '4']:
+    if choice in ['1', '4', '5']:
         # Collect data
         collector = SignLanguageDataCollector()
-        data = collector.collect_samples(SIGN_LABELS, samples_per_sign=30)
+        
+        if choice == '5' and os.path.exists('sign_data.pkl'):
+            # Load existing data
+            with open('sign_data.pkl', 'rb') as f:
+                existing_data = pickle.load(f)
+            print(f"📂 Loaded {len(existing_data)} existing samples")
+            
+            # Collect new data
+            new_data = collector.collect_samples(SIGN_LABELS, samples_per_sign=30)
+            
+            # Combine data
+            all_data = existing_data + new_data
+            print(f"📊 Total samples after combining: {len(all_data)}")
+        else:
+            # Collect fresh data
+            all_data = collector.collect_samples(SIGN_LABELS, samples_per_sign=30)
         
         # Save data
         with open('sign_data.pkl', 'wb') as f:
-            pickle.dump(data, f)
+            pickle.dump(all_data, f)
         print(f"💾 Data saved to sign_data.pkl")
         
-        if choice == '1':
+        if choice in ['1', '5']:
             return
     
     if choice in ['2', '4']:
@@ -479,16 +606,18 @@ def main():
         classifier = SignLanguageClassifier()
         X, y = classifier.prepare_data(data, SIGN_LABELS)
         classifier.train(X, y)
-        classifier.save_model('sign_model.pkl')
+        classifier.save_model('enhanced_sign_model.pkl')
         
         if choice == '2':
             return
     
     if choice in ['3', '4']:
         # Load model and run recognition
-        if os.path.exists('sign_model.pkl'):
+        model_file = 'enhanced_sign_model.pkl' if os.path.exists('enhanced_sign_model.pkl') else 'sign_model.pkl'
+        
+        if os.path.exists(model_file):
             classifier = SignLanguageClassifier()
-            classifier.load_model('sign_model.pkl')
+            classifier.load_model(model_file)
             
             recognizer = SignLanguageRecognizer(classifier)
             recognizer.run_recognition()
@@ -496,7 +625,7 @@ def main():
             print("❌ No trained model found! Please train first.")
             return
     
-    if choice not in ['1', '2', '3', '4']:
+    if choice not in ['1', '2', '3', '4', '5']:
         print("❌ Invalid choice!")
 
 if __name__ == "__main__":
