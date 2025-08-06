@@ -110,8 +110,8 @@ class SignLanguageDetector:
         self.hands = self.mp_hands.Hands(
             static_image_mode=False,
             max_num_hands=1,
-            min_detection_confidence=0.7,
-            min_tracking_confidence=0.5
+            min_detection_confidence=0.3,
+            min_tracking_confidence=0.3
         )
         self.mp_drawing = mp.solutions.drawing_utils
         
@@ -409,43 +409,94 @@ def health_check():
 
 @app.route('/api/detect-sign', methods=['POST'])
 def detect_sign():
-    """Detect sign from uploaded image file"""
+    """Enhanced detect sign with comprehensive debugging"""
+    print("\n" + "="*60)
+    print("🔍 DETECT-SIGN ENDPOINT HIT!")
+    print("="*60)
+    
     if detector is None:
+        print("❌ ERROR: Detector not initialized")
         return jsonify({
-            'error': 'Detector not initialized. Please check model file.',
+            'error': 'Detector not initialized',
             'success': False
         }), 500
     
     try:
-        # Get image from request
+        print(f"📡 Request method: {request.method}")
+        print(f"📡 Content type: {request.content_type}")
+        print(f"📡 Request headers: {dict(request.headers)}")
+        
+        # Check if image file is present
         if 'image' not in request.files:
+            print("❌ ERROR: No 'image' key in request.files")
+            print(f"🔍 Available keys: {list(request.files.keys())}")
             return jsonify({
                 'error': 'No image provided',
+                'success': False,
+                'debug_info': {
+                    'files_received': list(request.files.keys()),
+                    'content_type': request.content_type
+                }
+            }), 400
+        
+        file = request.files['image']
+        print(f"📁 File received: {file.filename}")
+        print(f"📁 File content type: {file.content_type}")
+        
+        # Read file data
+        file_data = file.read()
+        file_size = len(file_data)
+        print(f"📦 File size: {file_size} bytes")
+        
+        if file_size == 0:
+            print("❌ ERROR: Empty file received")
+            return jsonify({
+                'error': 'Empty image file',
                 'success': False
             }), 400
         
-        image_file = request.files['image']
+        # Convert to OpenCV image
+        print("🔄 Converting to OpenCV format...")
+        nparr = np.frombuffer(file_data, np.uint8)
+        print(f"📊 NumPy array shape: {nparr.shape}")
         
-        # Convert to OpenCV format
-        image_bytes = image_file.read()
-        nparr = np.frombuffer(image_bytes, np.uint8)
         frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         
         if frame is None:
+            print("❌ ERROR: Could not decode image")
             return jsonify({
                 'error': 'Invalid image format',
-                'success': False
+                'success': False,
+                'debug_info': {
+                    'file_size': file_size,
+                    'numpy_array_shape': nparr.shape
+                }
             }), 400
         
-        # Process frame with enhanced detector
+        print(f"🖼️ Image decoded successfully!")
+        print(f"📐 Image shape: {frame.shape}")
+        print(f"📐 Image dimensions: {frame.shape[1]}x{frame.shape[0]}")
+        print(f"💡 Image brightness (mean): {np.mean(frame):.2f}")
+        
+        # Process with detector
+        print("🎯 Calling detector.process_frame()...")
         result = detector.process_frame(frame)
+        
+        print("✅ Detection processing complete!")
+        print(f"🎯 Result: {result}")
+        
         return jsonify(result)
         
     except Exception as e:
-        logger.error(f"Error in detect_sign: {str(e)}")
+        print(f"❌ EXCEPTION in detect_sign: {str(e)}")
+        print(f"❌ Exception type: {type(e).__name__}")
+        import traceback
+        traceback.print_exc()
+        
         return jsonify({
             'error': f'Detection failed: {str(e)}',
-            'success': False
+            'success': False,
+            'exception_type': type(e).__name__
         }), 500
 
 @app.route('/api/detect-sign-base64', methods=['POST'])
@@ -534,6 +585,42 @@ def detect_sign_base64():
             'error': f'Detection failed: {str(e)}',
             'success': False
         }), 500
+
+@app.route('/api/test-image-upload', methods=['POST'])
+def test_image_upload():
+    """Test endpoint to verify image upload is working"""
+    print("\n🧪 TEST IMAGE UPLOAD ENDPOINT HIT!")
+    
+    try:
+        print(f"Request method: {request.method}")
+        print(f"Content type: {request.content_type}")
+        print(f"Files in request: {list(request.files.keys())}")
+        
+        if 'image' in request.files:
+            file = request.files['image']
+            file_data = file.read()
+            print(f"✅ Image received: {len(file_data)} bytes")
+            
+            return jsonify({
+                'success': True,
+                'message': 'Image upload test successful',
+                'file_size': len(file_data),
+                'filename': file.filename
+            })
+        else:
+            print("❌ No image in request")
+            return jsonify({
+                'success': False,
+                'message': 'No image found',
+                'files_received': list(request.files.keys())
+            })
+            
+    except Exception as e:
+        print(f"❌ Test upload error: {str(e)}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
 
 @app.route('/api/get-recognized-text', methods=['GET'])
 def get_recognized_text():
