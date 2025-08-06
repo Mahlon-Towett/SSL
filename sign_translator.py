@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Enhanced Sign Translator with Real-time Web Communication
-Integrates your working sign_translator.py with WebSocket server for seamless web integration
+Web-Fed Sign Translator
+Modified sign_translator.py to receive video frames from website and send back detected text
 """
 
 import cv2
@@ -19,6 +19,7 @@ import websockets
 import json
 import threading
 from datetime import datetime
+import base64
 
 # ============================================
 # ORIGINAL CLASSES (UNCHANGED)
@@ -57,91 +58,50 @@ class SignLanguageDataCollector:
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 800)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 600)
         
-        print("\n🎥 DATA COLLECTION MODE")
-        print("="*50)
-        print("📋 Instructions:")
-        print("  SPACE - Capture sample")
-        print("  N - Next sign")
-        print("  P - Previous sign") 
-        print("  Q - Quit")
-        print("="*50)
-        
-        current_sign_idx = 0
-        samples_collected = 0
-        target_samples = samples_per_sign
-        collecting = False
-        
-        while current_sign_idx < len(sign_labels):
-            ret, frame = cap.read()
-            if not ret:
-                break
+        for sign in sign_labels:
+            print(f"\n📋 Collecting samples for: {sign}")
+            print("🎯 Position your hand and press SPACE to collect samples")
+            print("⚠️  Press 'q' to skip this sign")
             
-            frame = cv2.flip(frame, 1)
-            height, width = frame.shape[:2]
-            current_sign = sign_labels[current_sign_idx]
+            sample_count = 0
             
-            # Extract landmarks for preview
-            landmarks, landmarks_visual = self.extract_hand_landmarks(frame)
-            
-            # Draw hand landmarks
-            if landmarks_visual:
-                self.mp_drawing.draw_landmarks(
-                    frame, landmarks_visual, self.mp_hands.HAND_CONNECTIONS)
-            
-            # UI
-            cv2.rectangle(frame, (0, 0), (width, 80), (0, 0, 0), -1)
-            cv2.putText(frame, f"Collecting: {current_sign} ({current_sign_idx+1}/{len(sign_labels)})", 
-                       (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-            cv2.putText(frame, f"Samples: {samples_collected}/{target_samples}", 
-                       (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-            
-            if landmarks:
-                cv2.putText(frame, "Hand Detected - Press SPACE", (10, height-20), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-                collecting = True
-            else:
-                cv2.putText(frame, "Show your hand clearly", (10, height-20), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-                collecting = False
-            
-            cv2.imshow('Sign Data Collection', frame)
-            
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord('q'):
-                break
-            elif key == ord(' ') and collecting and landmarks:
-                self.collected_data.append({
-                    'sign': current_sign,
-                    'landmarks': landmarks
-                })
-                samples_collected += 1
-                print(f"✅ Captured {current_sign} - Sample {samples_collected}")
+            while sample_count < samples_per_sign:
+                ret, frame = cap.read()
+                if not ret:
+                    break
                 
-                if samples_collected >= target_samples:
-                    current_sign_idx += 1
-                    samples_collected = 0
-                    if current_sign_idx < len(sign_labels):
-                        print(f"\n➡️  Moving to next sign: {sign_labels[current_sign_idx]}")
-                    
-            elif key == ord('n'):  # Next sign
-                if current_sign_idx < len(sign_labels) - 1:
-                    current_sign_idx += 1
-                    samples_collected = 0
-                    collecting = False
-                    print(f"\n➡️  Next sign: {sign_labels[current_sign_idx]}")
-                    
-            elif key == ord('p'):  # Previous sign
-                if current_sign_idx > 0:
-                    current_sign_idx -= 1
-                    samples_collected = 0
-                    collecting = False
-                    print(f"\n⬅️  Previous sign: {sign_labels[current_sign_idx]}")
-        
+                # Create a copy for display
+                display_frame = frame.copy()
+                cv2.putText(display_frame, f"Sign: {sign}", (20, 50),
+                           cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 3)
+                cv2.putText(display_frame, f"Samples: {sample_count}/{samples_per_sign}", (20, 100),
+                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                cv2.putText(display_frame, "Press SPACE to capture", (20, 150),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
+                
+                landmarks, landmarks_visual = self.extract_hand_landmarks(frame)
+                
+                if landmarks_visual:
+                    self.mp_drawing.draw_landmarks(
+                        display_frame, landmarks_visual, mp.solutions.hands.HAND_CONNECTIONS)
+                
+                cv2.imshow('Data Collection', display_frame)
+                
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord(' ') and landmarks:  # Space to capture
+                    self.collected_data.append({
+                        'landmarks': landmarks,
+                        'label': sign
+                    })
+                    sample_count += 1
+                    print(f"✅ Captured sample {sample_count}")
+                elif key == ord('q'):  # Skip sign
+                    print(f"⏭️ Skipped {sign}")
+                    break
+                
         cap.release()
         cv2.destroyAllWindows()
         self.hands.close()
-        
-        print(f"\n✅ Data collection complete! Total samples: {len(self.collected_data)}")
         return self.collected_data
 
 class SignLanguageClassifier:
@@ -149,8 +109,8 @@ class SignLanguageClassifier:
     
     def __init__(self):
         self.model = RandomForestClassifier(
-            n_estimators=200,
-            max_depth=15,
+            n_estimators=200,  
+            max_depth=15,      
             min_samples_split=5,
             min_samples_leaf=2,
             random_state=42,
@@ -160,61 +120,51 @@ class SignLanguageClassifier:
         self.idx_to_label = {}
         
     def prepare_data(self, collected_data, sign_labels):
-        """Convert collected data to training arrays"""
-        X = []
-        y = []
+        """Prepare data for training"""
+        X, y = [], []
         
-        self.label_to_idx = {label: idx for idx, label in enumerate(sign_labels)}
+        for sample in collected_data:
+            if sample['label'] in sign_labels:
+                X.append(sample['landmarks'])
+                y.append(sample['label'])
+        
+        # Create label mappings
+        unique_labels = sorted(list(set(y)))
+        self.label_to_idx = {label: idx for idx, label in enumerate(unique_labels)}
         self.idx_to_label = {idx: label for label, idx in self.label_to_idx.items()}
         
-        sign_counts = {}
-        for sample in collected_data:
-            sign = sample['sign']
-            sign_counts[sign] = sign_counts.get(sign, 0) + 1
-            X.append(sample['landmarks'])
-            y.append(self.label_to_idx[sign])
+        # Convert labels to indices
+        y_encoded = [self.label_to_idx[label] for label in y]
         
-        print(f"\n📊 Data Distribution:")
-        for sign, count in sorted(sign_counts.items()):
-            print(f"  {sign}: {count} samples")
-        
-        return np.array(X), np.array(y)
+        return np.array(X), np.array(y_encoded)
     
-    def train(self, X, y, test_size=0.2):
-        """Train the model"""
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=test_size, random_state=42, stratify=y
-        )
+    def train(self, X, y):
+        """Train the classifier"""
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
         
-        print(f"\n🎯 Training Details:")
-        print(f"  Training samples: {len(X_train)}")
-        print(f"  Testing samples:  {len(X_test)}")
-        print(f"  Number of signs:  {len(np.unique(y))}")
-        
-        print("\n🔄 Training model...")
+        print("🚀 Training model...")
+        start_time = time.time()
         self.model.fit(X_train, y_train)
+        training_time = time.time() - start_time
         
-        train_pred = self.model.predict(X_train)
-        test_pred = self.model.predict(X_test)
+        y_pred = self.model.predict(X_test)
+        accuracy = accuracy_score(y_test, y_pred)
         
-        train_acc = accuracy_score(y_train, train_pred)
-        test_acc = accuracy_score(y_test, test_pred)
+        print(f"✅ Training completed in {training_time:.2f} seconds")
+        print(f"📊 Test Accuracy: {accuracy:.4f} ({accuracy*100:.2f}%)")
+        print(f"🎯 Total Signs: {len(self.label_to_idx)}")
         
-        print(f"\n📊 Results:")
-        print(f"  Training Accuracy: {train_acc:.1%}")
-        print(f"  Testing Accuracy:  {test_acc:.1%}")
-        
-        return train_acc, test_acc
+        return accuracy
     
     def predict(self, landmarks):
-        """Predict sign with confidence"""
+        """Predict sign from landmarks"""
         proba = self.model.predict_proba([landmarks])[0]
         class_idx = np.argmax(proba)
         confidence = proba[class_idx]
         return self.idx_to_label[class_idx], confidence
     
     def predict_top_k(self, landmarks, k=3):
-        """Get top-k predictions"""
+        """Get top k predictions"""
         proba = self.model.predict_proba([landmarks])[0]
         top_indices = np.argsort(proba)[::-1][:k]
         
@@ -224,33 +174,35 @@ class SignLanguageClassifier:
         
         return predictions
     
-    def save_model(self, filepath='enhanced_sign_model.pkl'):
-        """Save the trained model"""
+    def save_model(self, filename):
+        """Save trained model"""
         model_data = {
             'model': self.model,
             'label_to_idx': self.label_to_idx,
             'idx_to_label': self.idx_to_label
         }
-        with open(filepath, 'wb') as f:
+        with open(filename, 'wb') as f:
             pickle.dump(model_data, f)
-        print(f"💾 Model saved to {filepath}")
+        print(f"💾 Model saved to {filename}")
     
-    def load_model(self, filepath='enhanced_sign_model.pkl'):
-        """Load a pre-trained model"""
-        with open(filepath, 'rb') as f:
+    def load_model(self, filename):
+        """Load trained model"""
+        with open(filename, 'rb') as f:
             model_data = pickle.load(f)
+        
         self.model = model_data['model']
         self.label_to_idx = model_data['label_to_idx']
         self.idx_to_label = model_data['idx_to_label']
-        print(f"📂 Model loaded from {filepath}")
-        print(f"   Available signs: {list(self.label_to_idx.keys())}")
+        
+        print(f"📦 Model loaded from {filename}")
+        print(f"🎯 Available signs: {len(self.label_to_idx)}")
 
 # ============================================
-# ENHANCED RECOGNIZER WITH WEB INTEGRATION
+# WEB-FED RECOGNIZER CLASS
 # ============================================
 
-class WebIntegratedSignLanguageRecognizer:
-    """Enhanced recognizer with WebSocket communication to web interface"""
+class WebFedSignLanguageRecognizer:
+    """Enhanced recognizer that receives frames from website"""
     
     def __init__(self, classifier):
         self.classifier = classifier
@@ -273,8 +225,11 @@ class WebIntegratedSignLanguageRecognizer:
         
         # WebSocket communication
         self.websocket_clients = set()
-        self.websocket_server = None
-        self.server_task = None
+        self.processing_stats = {
+            'frames_processed': 0,
+            'detections_made': 0,
+            'start_time': time.time()
+        }
         
     def extract_landmarks(self, image):
         """EXACT SAME as working version"""
@@ -288,8 +243,86 @@ class WebIntegratedSignLanguageRecognizer:
                 landmark_list.extend([lm.x, lm.y, lm.z])
             return landmark_list, landmarks
         return None, None
-    
-    async def websocket_handler(self, websocket, path):
+
+    def process_frame_from_web(self, frame_data):
+        """Process a frame received from the website"""
+        try:
+            # Decode base64 frame
+            frame_bytes = base64.b64decode(frame_data.split(',')[1])
+            frame_array = np.frombuffer(frame_bytes, dtype=np.uint8)
+            frame = cv2.imdecode(frame_array, cv2.IMREAD_COLOR)
+            
+            if frame is None:
+                return None
+            
+            self.processing_stats['frames_processed'] += 1
+            
+            # Extract landmarks from frame
+            landmarks, landmarks_visual = self.extract_landmarks(frame)
+            
+            hand_detected = landmarks is not None
+            current_sign = None
+            confidence = 0.0
+            new_text_added = False
+            top_predictions = []
+            
+            if hand_detected:
+                # Get prediction
+                sign, conf = self.classifier.predict(landmarks)
+                top_predictions = self.classifier.predict_top_k(landmarks, k=5)  # Get top 5 for debugging
+                
+                # DEBUG: Print top predictions to console
+                print(f"🔍 DEBUG - Top predictions:")
+                for i, (pred_sign, pred_conf) in enumerate(top_predictions, 1):
+                    print(f"   {i}. {pred_sign}: {pred_conf:.3f}")
+                
+                # ALWAYS use the top prediction regardless of confidence
+                detected_sign = sign  # This is already the highest confidence prediction
+                current_sign = detected_sign
+                confidence = conf
+                
+                print(f"🎯 Selected: {detected_sign} (Confidence: {conf:.3f})")
+                
+                # Apply smoothing but accept ANY confidence level
+                self.prediction_history.append((sign, conf))
+                
+                if len(self.prediction_history) >= 3:  # Reduced history for faster response
+                    # Get most common recent prediction (no confidence filtering)
+                    recent_predictions = [pred for pred, conf_val in list(self.prediction_history)[-5:]]  # Last 5 predictions
+                    
+                    if recent_predictions:
+                        most_common = Counter(recent_predictions).most_common(1)
+                        if most_common:
+                            stable_sign = most_common[0][0]
+                            
+                            # Add to text if stable and new (reduced time filter)
+                            current_time = time.time()
+                            if (stable_sign != self.last_sign and 
+                                current_time - self.last_sign_time > 1.0):  # Reduced from 1.8 to 1.0 seconds
+                                self.recognized_text.append(stable_sign)
+                                self.last_sign = stable_sign
+                                self.last_sign_time = current_time
+                                new_text_added = True
+                                self.processing_stats['detections_made'] += 1
+                                print(f"✅ Added: {stable_sign} (Confidence: {conf:.2f})")
+            
+            # Return detection results
+            return {
+                'hand_detected': hand_detected,
+                'current_sign': current_sign,
+                'confidence': confidence,
+                'recognized_text': self.recognized_text.copy(),
+                'full_text': ' '.join(self.recognized_text),
+                'new_text_added': new_text_added,
+                'top_predictions': [(sign, float(conf)) for sign, conf in top_predictions],
+                'processing_stats': self.processing_stats.copy()
+            }
+            
+        except Exception as e:
+            print(f"❌ Error processing frame: {e}")
+            return None
+
+    async def websocket_handler(self, websocket):
         """Handle WebSocket connections from web interface"""
         print(f"🔗 Web interface connected from {websocket.remote_address}")
         self.websocket_clients.add(websocket)
@@ -301,243 +334,166 @@ class WebIntegratedSignLanguageRecognizer:
                 'connected': True,
                 'available_signs': list(self.classifier.label_to_idx.keys()),
                 'total_signs': len(self.classifier.label_to_idx),
-                'message': 'Connected to sign_translator.py'
+                'message': 'Connected to Web-Fed Sign Translator',
+                'recognized_text': self.recognized_text.copy()
             }))
             
-            # Keep connection alive
-            await websocket.wait_closed()
+            # Handle incoming messages
+            async for message in websocket:
+                try:
+                    data = json.loads(message)
+                    
+                    if data.get('type') == 'frame':
+                        # Process the frame
+                        result = self.process_frame_from_web(data.get('frame_data'))
+                        
+                        if result:
+                            # Send back detection results
+                            await websocket.send(json.dumps({
+                                'type': 'detection_result',
+                                'timestamp': datetime.now().isoformat(),
+                                **result
+                            }))
+                    
+                    elif data.get('type') == 'clear_text':
+                        # Clear recognized text
+                        self.recognized_text.clear()
+                        self.prediction_history.clear()
+                        self.last_sign = None
+                        self.last_sign_time = time.time()
+                        print("🗑️ Text cleared by web interface")
+                        
+                        await websocket.send(json.dumps({
+                            'type': 'text_cleared',
+                            'message': 'Recognized text cleared',
+                            'recognized_text': []
+                        }))
+                    
+                    elif data.get('type') == 'get_stats':
+                        # Send processing statistics
+                        runtime = time.time() - self.processing_stats['start_time']
+                        fps = self.processing_stats['frames_processed'] / runtime if runtime > 0 else 0
+                        
+                        await websocket.send(json.dumps({
+                            'type': 'stats',
+                            'processing_stats': self.processing_stats.copy(),
+                            'runtime_seconds': runtime,
+                            'fps': fps,
+                            'total_words': len(self.recognized_text)
+                        }))
+                        
+                except json.JSONDecodeError:
+                    print("⚠️ Invalid JSON received from web interface")
+                except Exception as e:
+                    print(f"⚠️ Error handling message: {e}")
+                    
         except websockets.exceptions.ConnectionClosed:
             pass
+        except Exception as e:
+            print(f"⚠️ WebSocket error: {e}")
         finally:
             print(f"🔌 Web interface disconnected")
             self.websocket_clients.discard(websocket)
-    
-    async def send_to_web(self, data):
-        """Send data to all connected web clients"""
-        if self.websocket_clients:
-            message = json.dumps(data)
-            # Send to all connected clients
-            disconnected = set()
-            for client in self.websocket_clients:
-                try:
-                    await client.send(message)
-                except websockets.exceptions.ConnectionClosed:
-                    disconnected.add(client)
-            
-            # Remove disconnected clients
-            self.websocket_clients -= disconnected
-    
+
     def start_websocket_server(self):
-        """Start WebSocket server in background thread"""
-        def run_server():
-            asyncio.set_event_loop(asyncio.new_event_loop())
-            loop = asyncio.get_event_loop()
+        """Start WebSocket server"""
+        async def run_server():
+            print(f"🌐 Starting Web-Fed WebSocket server on ws://localhost:8765")
+            print(f"🔗 Web interface can now connect to send frames and receive detection results")
             
-            start_server = websockets.serve(
+            server = await websockets.serve(
                 self.websocket_handler,
                 "localhost",
                 8765,  # WebSocket port
-                ping_interval=20,
-                ping_timeout=10
+                ping_interval=30,
+                ping_timeout=20,
+                max_size=10_000_000,  # 10MB max message size for large images
+                max_queue=32,
+                compression=None  # Disable compression for speed
             )
             
-            print(f"🌐 WebSocket server started on ws://localhost:8765")
-            print(f"🔗 Web interface can now connect to receive real-time sign detection")
+            print("✅ WebSocket server started successfully!")
+            print("📋 Commands:")
+            print("  - Send frames: {'type': 'frame', 'frame_data': 'data:image/jpeg;base64,...'}")
+            print("  - Clear text: {'type': 'clear_text'}")
+            print("  - Get stats: {'type': 'get_stats'}")
             
-            loop.run_until_complete(start_server)
-            loop.run_forever()
+            await server.wait_closed()
         
-        server_thread = threading.Thread(target=run_server, daemon=True)
+        # Run server in background thread
+        def run_loop():
+            asyncio.set_event_loop(asyncio.new_event_loop())
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(run_server())
+        
+        server_thread = threading.Thread(target=run_loop, daemon=True)
         server_thread.start()
-        time.sleep(1)  # Give server time to start
-    
-    def send_detection_update(self, hand_detected, current_sign=None, confidence=0.0, new_text_added=False):
-        """Send detection update to web interface"""
-        data = {
-            'type': 'detection_update',
-            'timestamp': datetime.now().isoformat(),
-            'hand_detected': hand_detected,
-            'current_sign': current_sign,
-            'confidence': confidence,
-            'recognized_text': self.recognized_text.copy(),
-            'full_text': ' '.join(self.recognized_text),
-            'new_text_added': new_text_added
-        }
+        time.sleep(2)  # Give server more time to start
         
-        # Send asynchronously
-        asyncio.run_coroutine_threadsafe(
-            self.send_to_web(data),
-            asyncio.get_event_loop()
-        ).result() if self.websocket_clients else None
-    
-    def run_recognition_with_web_integration(self):
-        """Run recognition with real-time web updates"""
+        return server_thread
+
+    def run_web_fed_recognition(self):
+        """Run the web-fed recognition system"""
         # Start WebSocket server
         self.start_websocket_server()
         
-        cap = cv2.VideoCapture(0)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 800)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 600)
-        
         print("\n" + "="*60)
-        print("🎥 ENHANCED SIGN LANGUAGE RECOGNITION WITH WEB INTEGRATION")
+        print("🎥 WEB-FED SIGN LANGUAGE RECOGNITION")
         print("="*60)
         print(f"\n🎯 Available Signs ({len(self.classifier.label_to_idx)}):")
         signs = list(self.classifier.label_to_idx.keys())
         for i, sign in enumerate(signs, 1):
-            print(f"  {i:2d}. {sign}")
+            if i % 6 == 1:
+                print()  # New line every 6 signs
+            print(f"  {sign:<12}", end="")
         
-        print(f"\n⚙️ Controls:")
-        print("  C - Clear text")
-        print("  S - Save text to file")
-        print("  T - Toggle confidence threshold")
-        print("  Q - Quit")
+        print(f"\n\n📡 WebSocket Server Status:")
+        print(f"  🔗 URL: ws://localhost:8765")
+        print(f"  📊 Confidence Threshold: DISABLED (always use top prediction)")
+        print(f"  🎯 Temporal Filter: 1.0 seconds")
+        print(f"  📝 Total Recognized Words: {len(self.recognized_text)}")
         
-        print(f"\n🌐 Web Integration:")
-        print("  WebSocket Server: ws://localhost:8765")
-        print("  Connected clients: Updates sent in real-time")
-        print("  Your web interface will receive live detection data")
-        print("-"*60 + "\n")
+        print(f"\n📋 Web Interface Commands:")
+        print(f"  🎥 Send frame: {{'type': 'frame', 'frame_data': '...'}} ")
+        print(f"  🗑️ Clear text: {{'type': 'clear_text'}}")
+        print(f"  📊 Get stats: {{'type': 'get_stats'}}")
         
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            
-            frame = cv2.flip(frame, 1)
-            height, width = frame.shape[:2]
-            
-            # Enhanced side panel
-            panel_width = 400
-            info_panel = np.ones((height, panel_width, 3), dtype=np.uint8) * 40
-            
-            # Extract landmarks - EXACT SAME logic
-            landmarks, landmarks_visual = self.extract_landmarks(frame)
-            
-            # Title
-            cv2.rectangle(frame, (0, 0), (width, 60), (0, 0, 0), -1)
-            cv2.putText(frame, "Enhanced Sign Recognition + Web", (10, 40),
-                       cv2.FONT_HERSHEY_DUPLEX, 1, (255, 255, 255), 2)
-            
-            hand_detected = landmarks is not None
-            current_sign = None
-            confidence = 0.0
-            new_text_added = False
-            
-            if landmarks is not None:
-                # Draw hand landmarks
-                self.mp_drawing.draw_landmarks(
-                    frame, landmarks_visual, self.mp_hands.HAND_CONNECTIONS,
-                    self.mp_drawing.DrawingSpec(color=(0,255,0), thickness=2, circle_radius=3),
-                    self.mp_drawing.DrawingSpec(color=(255,255,255), thickness=2)
-                )
-                
-                # Get predictions - EXACT SAME logic
-                sign, conf = self.classifier.predict(landmarks)
-                top_predictions = self.classifier.predict_top_k(landmarks, k=3)
-                
-                current_sign = sign
-                confidence = conf
-                
-                # Add to history - EXACT SAME logic
-                self.prediction_history.append((sign, conf))
-                
-                # Smooth predictions - EXACT SAME logic
-                if len(self.prediction_history) >= 10:
-                    recent = [(s, c) for s, c in self.prediction_history 
-                             if c > self.confidence_threshold]
-                    if recent:
-                        signs = [s for s, c in recent]
-                        most_common = Counter(signs).most_common(1)
-                        if most_common and len(most_common[0]) > 0:
-                            detected_sign = most_common[0][0]
-                            
-                            # Add to text if stable and new - EXACT SAME logic
-                            current_time = time.time()
-                            if (detected_sign != self.last_sign and 
-                                current_time - self.last_sign_time > 1.8):
-                                self.recognized_text.append(detected_sign)
-                                self.last_sign = detected_sign
-                                self.last_sign_time = current_time
-                                new_text_added = True
-                                print(f"✅ Added: {detected_sign}")
-                
-                # Display on panel
-                cv2.putText(info_panel, f"Sign: {sign}", (20, 100),
-                           cv2.FONT_HERSHEY_SIMPLEX, 1.2, (255, 255, 255), 2)
-                cv2.putText(info_panel, f"Conf: {conf:.2f}", (20, 140),
-                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                
-                # Top predictions
-                cv2.putText(info_panel, "Top 3:", (20, 200),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
-                for i, (pred_sign, pred_conf) in enumerate(top_predictions):
-                    y_pos = 230 + i * 30
-                    cv2.putText(info_panel, f"{i+1}. {pred_sign} ({pred_conf:.2f})", 
-                               (25, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 2)
-            
-            # Send update to web interface
-            self.send_detection_update(hand_detected, current_sign, confidence, new_text_added)
-            
-            # Display recognized text
-            cv2.putText(info_panel, "Recognized Text:", (20, 320),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
-            
-            if self.recognized_text:
-                text_lines = []
-                current_line = ""
-                words_per_line = 3
-                
-                for i, word in enumerate(self.recognized_text):
-                    if i > 0 and i % words_per_line == 0:
-                        text_lines.append(current_line.strip())
-                        current_line = word + " "
-                    else:
-                        current_line += word + " "
-                
-                if current_line.strip():
-                    text_lines.append(current_line.strip())
-                
-                for i, line in enumerate(text_lines[-5:]):  # Show last 5 lines
-                    y_pos = 350 + i * 25
-                    cv2.putText(info_panel, line, (20, y_pos),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-            
-            # Status
-            cv2.putText(info_panel, f"WebSocket clients: {len(self.websocket_clients)}", 
-                       (20, height-60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
-            cv2.putText(info_panel, f"Threshold: {self.confidence_threshold:.1f}", 
-                       (20, height-35), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-            cv2.putText(info_panel, f"Total words: {len(self.recognized_text)}", 
-                       (20, height-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-            
-            # Combine frame and panel
-            combined = np.hstack([frame, info_panel])
-            cv2.imshow('Enhanced Sign Recognition + Web Integration', combined)
-            
-            # Handle keyboard input
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord('q'):
-                break
-            elif key == ord('c'):
-                self.recognized_text.clear()
-                print("🗑️ Text cleared")
-            elif key == ord('s'):
-                if self.recognized_text:
-                    timestamp = time.strftime("%Y%m%d_%H%M%S")
-                    filename = f'recognized_text_{timestamp}.txt'
-                    with open(filename, 'w') as f:
-                        f.write(' '.join(self.recognized_text))
-                    print(f"💾 Text saved to {filename}")
-            elif key == ord('t'):
-                thresholds = [0.5, 0.6, 0.7, 0.8, 0.9]
-                current_idx = thresholds.index(self.confidence_threshold) if self.confidence_threshold in thresholds else 2
-                next_idx = (current_idx + 1) % len(thresholds)
-                self.confidence_threshold = thresholds[next_idx]
-                print(f"🎯 Confidence threshold set to: {self.confidence_threshold:.1f}")
+        print(f"\n🎮 Keyboard Commands:")
+        print(f"  ⌨️  Press 'c' + Enter to clear recognized text")
+        print(f"  ⌨️  Press 's' + Enter to show statistics")
+        print(f"  ⌨️  Press 'q' + Enter to quit")
+        print("-" * 60)
         
-        cap.release()
-        cv2.destroyAllWindows()
+        # Keep server running and handle keyboard input
+        try:
+            while True:
+                user_input = input().strip().lower()
+                
+                if user_input == 'q':
+                    print("🛑 Shutting down...")
+                    break
+                elif user_input == 'c':
+                    self.recognized_text.clear()
+                    self.prediction_history.clear()
+                    self.last_sign = None
+                    self.last_sign_time = time.time()
+                    print("🗑️ Text cleared")
+                elif user_input == 's':
+                    runtime = time.time() - self.processing_stats['start_time']
+                    fps = self.processing_stats['frames_processed'] / runtime if runtime > 0 else 0
+                    print(f"\n📊 PROCESSING STATISTICS:")
+                    print(f"  🎥 Frames processed: {self.processing_stats['frames_processed']}")
+                    print(f"  🎯 Detections made: {self.processing_stats['detections_made']}")
+                    print(f"  ⏱️  Runtime: {runtime:.1f} seconds")
+                    print(f"  📈 FPS: {fps:.1f}")
+                    print(f"  👥 Connected clients: {len(self.websocket_clients)}")
+                    print(f"  📝 Recognized words: {len(self.recognized_text)}")
+                    if self.recognized_text:
+                        print(f"  📜 Current text: {' '.join(self.recognized_text)}")
+                
+        except KeyboardInterrupt:
+            print("\n🛑 Shutting down...")
+        
         self.hands.close()
         
         if self.recognized_text:
@@ -547,11 +503,11 @@ class WebIntegratedSignLanguageRecognizer:
             print("="*60)
 
 # ============================================
-# MAIN PROGRAM WITH WEB INTEGRATION
+# MAIN PROGRAM
 # ============================================
 
 def main():
-    """Main execution function with web integration"""
+    """Main execution function"""
     
     SIGN_LABELS = [
         'HELLO', 'THANKS', 'YES', 'NO', 'PLEASE', 'GOOD',
@@ -560,7 +516,7 @@ def main():
     ]
     
     print("\n" + "="*70)
-    print(" "*15 + "ENHANCED SIGN LANGUAGE RECOGNITION WITH WEB INTEGRATION")
+    print(" "*15 + "WEB-FED SIGN LANGUAGE RECOGNITION")
     print("="*70)
     print(f"\n📚 Available Signs ({len(SIGN_LABELS)}):")
     
@@ -571,7 +527,7 @@ def main():
     print(f"\n🎯 Choose an option:")
     print("  1. Collect training data")
     print("  2. Train model") 
-    print("  3. Run recognition with web integration 🌐")
+    print("  3. Run web-fed recognition 🌐")
     print("  4. Complete setup (1 + 2 + 3)")
     print("  5. Add data to existing dataset")
     print("-"*70)
@@ -623,12 +579,12 @@ def main():
             classifier = SignLanguageClassifier()
             classifier.load_model(model_file)
             
-            print("\n🌐 Starting Web-Integrated Recognition...")
-            print("🔗 This will start a WebSocket server that your web interface can connect to")
-            print("📡 Real-time detection data will be sent to your webpage")
+            print("\n🌐 Starting Web-Fed Recognition...")
+            print("🔗 This will receive video frames from your website")
+            print("📡 Detection results will be sent back to the website")
             
-            recognizer = WebIntegratedSignLanguageRecognizer(classifier)
-            recognizer.run_recognition_with_web_integration()
+            recognizer = WebFedSignLanguageRecognizer(classifier)
+            recognizer.run_web_fed_recognition()
         else:
             print("❌ No trained model found! Please train first.")
             return
