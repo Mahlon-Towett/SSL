@@ -453,38 +453,43 @@ const VideoBasedAvatar = ({ currentSign = 'Hello', isPlaying = false, onVideoCom
   };
 
   // Control video playback with smooth transitions
-  useEffect(() => {
-    if (videoRef.current && videoLoaded) {
-      if (isPlaying) {
-        // Start from beginning and play
-        videoRef.current.currentTime = 0;
-        videoRef.current.play().catch(e => {
-          console.log('Video play failed:', e);
-        });
-      } else {
-        videoRef.current.pause();
-        // When paused, smoothly return to first frame
-        const videoPlane = sceneRef.current?.avatarGroup?.children.find(child => 
-          child.material && child.material.map && child.material.map.isVideoTexture
-        );
-        
-        if (videoPlane) {
-          // Smooth fade transition
-          videoPlane.material.opacity = 0.5;
-          setTimeout(() => {
-            videoRef.current.currentTime = 0;
-            setTimeout(() => {
-              if (videoPlane) {
-                videoPlane.material.opacity = 1.0;
-              }
-            }, 100);
-          }, 100);
-        } else {
-          videoRef.current.currentTime = 0;
-        }
-      }
+useEffect(() => {
+  const video = videoRef.current;
+
+  if (!video || !videoLoaded) return;
+
+  if (isPlaying) {
+    video.currentTime = 0;
+    const playPromise = video.play();
+    if (playPromise !== undefined) {
+      playPromise.catch(e => {
+        console.warn('Video play failed:', e);
+      });
     }
-  }, [isPlaying, videoLoaded]);
+  } else {
+    video.pause();
+
+    // Smooth transition
+    const videoPlane = sceneRef.current?.avatarGroup?.children.find(child => 
+      child.material && child.material.map && child.material.map.isVideoTexture
+    );
+
+    if (videoPlane) {
+      videoPlane.material.opacity = 0.5;
+      setTimeout(() => {
+        if (video === videoRef.current) {
+          video.currentTime = 0;
+          setTimeout(() => {
+            videoPlane.material.opacity = 1.0;
+          }, 100);
+        }
+      }, 100);
+    } else {
+      video.currentTime = 0;
+    }
+  }
+}, [isPlaying, videoLoaded]);
+
 
   // Change video when sign changes with smooth crossfade transition
   useEffect(() => {
