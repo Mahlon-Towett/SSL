@@ -1,8 +1,6 @@
-// src/App.js - Main application component
+// src/App.js - Main application component with proper imports
 import React from 'react';
-import SignToTextModule from './components/SignToTextModule';
 import SpeechToSignModule from './components/SpeechToSignModule';
-import InfoPanel from './components/InfoPanel';
 import './App.css';
 
 function App() {
@@ -22,15 +20,15 @@ function App() {
       {/* Main Content Grid */}
       <div className="main-content">
         <div className="main-grid">
-          {/* Sign to Text Module */}
-          <SignToTextModule />
-          
-          {/* Speech to Sign Module */}
+          {/* Enhanced Speech to Sign Module */}
           <SpeechToSignModule />
+          
+          {/* You can add your SignToTextModule here if you have it */}
+          {/* <SignToTextModule /> */}
         </div>
 
-        {/* Info Panel */}
-        <InfoPanel />
+        {/* You can add InfoPanel here if you have it */}
+        {/* <InfoPanel /> */}
       </div>
     </div>
   );

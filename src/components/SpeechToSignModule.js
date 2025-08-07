@@ -1,9 +1,15 @@
-// src/components/SpeechToSignModule.js - Speech to sign translation functionality
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import VideoBasedAvatar from './VideoBasedAvatar';
+// src/components/SpeechToSignModule.jsx - Updated to use new enhanced avatar and queue system
+
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import EnhancedVideoAvatar from './EnhancedVideoAvatar';
+import ErrorBoundary from './ErrorBoundary';
 import Controls from './Controls';
+import SignQueueManager from '../utils/SignQueueManager';
+import AvatarStateMachine from '../utils/AvatarStateMachine';
+import { getAllSigns } from '../constants/videoMappings';
 import { 
-  MessageSquare, Mic, MicOff, Play, ChevronRight, ChevronLeft
+  MessageSquare, Mic, MicOff, Play, ChevronRight, ChevronLeft,
+  Pause, Square, SkipForward, AlertCircle
 } from 'lucide-react';
 
 const SpeechToSignModule = () => {
@@ -13,94 +19,94 @@ const SpeechToSignModule = () => {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [finalTranscript, setFinalTranscript] = useState('');
-  const [translationQueue, setTranslationQueue] = useState([]);
-  const [currentQueueIndex, setCurrentQueueIndex] = useState(0);
-  const [isTranslating, setIsTranslating] = useState(false);
   const [speechSupported, setSpeechSupported] = useState(false);
   const [showAllSigns, setShowAllSigns] = useState(false);
+  const [queueStatus, setQueueStatus] = useState(null);
+  const [avatarState, setAvatarState] = useState('neutral');
+  const [error, setError] = useState(null);
   
   // Refs
   const recognitionRef = useRef(null);
-  const queueTimeoutRef = useRef(null);
 
   // Complete list of available signs
-  const signs = [
-    // Numbers
-    '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
-    // Letters A-Z
-    'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 
-    'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z',
-    // Common words
-    'Hello', 'Welcome', 'Thank_You', 'Thank', 'Beautiful', 'Better', 'Happy', 'Good', 
-    'Great', 'Name', 'My', 'ME', 'You', 'Your', 'Yourself', 'I', 'We', 'Us', 'They',
-    'This', 'That', 'Those', 'Here', 'There', 'Where', 'What', 'When', 'Why', 'Who',
-    'Which', 'Whose', 'How', 'Time', 'Day', 'Home', 'Work', 'Study', 'Learn', 'Help',
-    'Go', 'Come', 'Stay', 'Walk', 'See', 'Look', 'Talk', 'Say', 'Ask', 'Eat', 'Drink',
-    'Sleep', 'Sad', 'Angry', 'Love', 'Like', 'Want', 'Need', 'Have', 'Do',
-    'Does_Not', 'Do_Not', 'Cannot', 'Will', 'Can', 'Be', 'Am', 'Is', 'Are', 'Was'
-  ];
+  const signs = useMemo(() => getAllSigns(), []);
 
-  // Speech-to-Sign mapping
-  const speechToSignMapping = {
+  // Managers (created once)
+  const avatarStateMachine = useMemo(() => new AvatarStateMachine({
+    debugMode: process.env.NODE_ENV === 'development'
+  }), []);
+
+  const queueManager = useMemo(() => new SignQueueManager(avatarStateMachine, {
+    debugMode: process.env.NODE_ENV === 'development',
+    autoStart: true,
+    interSignDelay: 300,
+    callbacks: {
+      onQueueStart: (data) => {
+        console.log('🚀 Queue started:', data);
+        setIsPlaying(true);
+      },
+      onQueueComplete: (data) => {
+        console.log('✅ Queue completed:', data);
+        setIsPlaying(false);
+      },
+      onSignStart: (data) => {
+        console.log('🎬 Sign started:', data.item.signName);
+        setCurrentSign(data.item.signName);
+      },
+      onSignComplete: (data) => {
+        console.log('✅ Sign completed:', data.item.signName);
+      },
+      onSignError: (data) => {
+        console.error('❌ Sign error:', data.error);
+        setError(`Sign error: ${data.item.signName}`);
+      },
+      onProgress: (data) => {
+        setQueueStatus(data);
+      }
+    }
+  }), [avatarStateMachine]);
+
+  // Speech-to-sign mapping (only for existing videos)
+  const speechToSignMapping = useMemo(() => ({
+    // Basic mappings - only include signs that have videos
     'hello': 'Hello',
     'hi': 'Hello',
     'hey': 'Hello',
-    'welcome': 'Welcome',
-    'thank you': 'Thank_You',
+    'thank': 'Thank',
     'thanks': 'Thank_You',
-    'beautiful': 'Beautiful',
-    'pretty': 'Beautiful',
-    'happy': 'Happy',
-    'glad': 'Happy',
+    'yes': 'Yes',
+    'help': 'Help',
     'good': 'Good',
     'great': 'Great',
+    'love': 'Love',
+    'friend': 'Friend',
+    'beautiful': 'Beautiful',
     'better': 'Better',
+    'happy': 'Happy',
     'name': 'Name',
     'my': 'My',
     'me': 'ME',
     'you': 'You',
     'your': 'Your',
+    'yourself': 'Yourself',
     'i': 'I',
     'we': 'We',
+    'us': 'Us',
     'they': 'They',
-    'what': 'What',
+    'this': 'This',
+    'that': 'That',
+    'those': 'Those',
+    'here': 'Here',
+    'there': 'There',
     'where': 'Where',
+    'what': 'What',
     'when': 'When',
     'why': 'Why',
     'who': 'Who',
     'how': 'How',
-    'help': 'Help',
-    'work': 'Work',
-    'home': 'Home',
-    'time': 'Time',
-    'day': 'Day',
-    'go': 'Go',
-    'come': 'Come',
-    'see': 'See',
-    'look': 'Look',
-    'walk': 'Walk',
-    'talk': 'Talk',
-    'say': 'Say',
-    'ask': 'Ask',
-    'eat': 'Eat',
-    'drink': 'Drink',
-    'sleep': 'Sleep',
-    'sad': 'Sad',
-    'angry': 'Angry',
-    'love': 'Love',
-    'like': 'Like',
-    'want': 'Want',
-    'need': 'Need',
-    'have': 'Have',
-    'do': 'Do',
-    'can': 'Can',
-    'will': 'Will',
-    'be': 'Be',
-    'am': 'Am',
-    'is': 'Is',
-    'are': 'Are',
-    'was': 'Was'
-  };
+    'welcome': 'Welcome',
+    'sorry': 'Sorry'
+  }), []);
 
   // Initialize speech recognition
   useEffect(() => {
@@ -135,6 +141,7 @@ const SpeechToSignModule = () => {
       recognitionRef.current.onerror = (event) => {
         console.error('Speech recognition error:', event.error);
         setIsListening(false);
+        setError(`Speech recognition error: ${event.error}`);
       };
       
       recognitionRef.current.onend = () => {
@@ -145,9 +152,9 @@ const SpeechToSignModule = () => {
     }
   }, []);
 
-  // Translate speech to signs
+  // Translate speech to signs with improved logic
   const translateSpeechToSigns = useCallback((spokenText) => {
-    console.log('Translating:', spokenText);
+    console.log('🎙️ Translating speech:', spokenText);
     const words = spokenText.toLowerCase().trim().split(/\s+/);
     const foundSigns = [];
 
@@ -183,6 +190,7 @@ const SpeechToSignModule = () => {
       for (const word of words) {
         // Skip words that were already part of multi-word phrases
         if ((word === 'thank' && fullText.includes('thank you')) ||
+            (word === 'you' && fullText.includes('thank you')) ||
             (word === 'do' && (fullText.includes('do not') || fullText.includes("don't"))) ||
             (word === 'does' && (fullText.includes('does not') || fullText.includes("doesn't"))) ||
             (word === 'not' && (fullText.includes('do not') || fullText.includes('does not')))) {
@@ -208,64 +216,20 @@ const SpeechToSignModule = () => {
     }
 
     if (foundSigns.length > 0) {
-      console.log('Found signs to translate:', foundSigns);
-      startTranslationSequence(foundSigns);
+      console.log('🎯 Found signs to translate:', foundSigns);
+      // Clear any existing error
+      setError(null);
+      // Add to queue for processing
+      queueManager.addSigns(foundSigns);
+    } else {
+      console.log('⚠️ No signs found for:', spokenText);
     }
-  }, []);
-
-  // Start translation sequence
-  const startTranslationSequence = useCallback((signs) => {
-    console.log('Starting translation sequence:', signs);
-    
-    // Clear any existing timeout
-    if (queueTimeoutRef.current) {
-      clearTimeout(queueTimeoutRef.current);
-      queueTimeoutRef.current = null;
-    }
-    
-    setTranslationQueue(signs);
-    setCurrentQueueIndex(0);
-    setIsTranslating(true);
-    
-    // Process the queue
-    processQueue(signs, 0);
-  }, []);
-
-  // Process queue one sign at a time
-  const processQueue = useCallback((queue, index) => {
-    if (index >= queue.length) {
-      console.log('Translation sequence completed');
-      setIsTranslating(false);
-      setTranslationQueue([]);
-      setCurrentQueueIndex(0);
-      return;
-    }
-
-    const sign = queue[index];
-    console.log(`Playing sign ${index + 1}/${queue.length}: ${sign}`);
-    
-    setCurrentQueueIndex(index);
-    setCurrentSign(sign);
-    setIsPlaying(true);
-
-    // Adjust timing based on sign type
-    const duration = (sign.length === 1 || sign.match(/^\d$/)) ? 1500 : 2500;
-
-    // Move to next sign after duration
-    queueTimeoutRef.current = setTimeout(() => {
-      setIsPlaying(false);
-      
-      // Small delay before next sign for smooth transition
-      setTimeout(() => {
-        processQueue(queue, index + 1);
-      }, 300);
-    }, duration);
-  }, []);
+  }, [speechToSignMapping, queueManager]);
 
   // Toggle speech recognition
-  const toggleListening = () => {
+  const toggleListening = useCallback(() => {
     if (!speechSupported) {
-      alert('Speech recognition not supported in this browser');
+      setError('Speech recognition not supported in this browser');
       return;
     }
 
@@ -275,83 +239,81 @@ const SpeechToSignModule = () => {
     } else {
       setTranscript('');
       setFinalTranscript('');
+      setError(null);
       
       try {
         recognitionRef.current.start();
         setIsListening(true);
       } catch (error) {
         console.error('Failed to start recognition:', error);
-        alert('Failed to start speech recognition. Please try again.');
+        setError('Failed to start speech recognition. Please try again.');
       }
     }
-  };
+  }, [speechSupported, isListening]);
 
   // Manual controls
-  const playAnimation = () => {
-    if (queueTimeoutRef.current) {
-      clearTimeout(queueTimeoutRef.current);
-      queueTimeoutRef.current = null;
+  const playAnimation = useCallback(() => {
+    if (!isPlaying) {
+      queueManager.addSign(currentSign);
     }
-    
-    setIsTranslating(false);
-    setTranslationQueue([]);
-    setIsPlaying(true);
-  };
+  }, [currentSign, isPlaying, queueManager]);
 
-  const pauseAnimation = () => {
+  const pauseAnimation = useCallback(() => {
+    queueManager.pause();
     setIsPlaying(false);
-  };
+  }, [queueManager]);
 
-  const nextSign = () => {
+  const stopAnimation = useCallback(() => {
+    queueManager.stop();
+    setIsPlaying(false);
+  }, [queueManager]);
+
+  const nextSign = useCallback(() => {
     const currentIndex = signs.indexOf(currentSign);
     const nextIndex = (currentIndex + 1) % signs.length;
+    const nextSignName = signs[nextIndex];
     
-    if (queueTimeoutRef.current) {
-      clearTimeout(queueTimeoutRef.current);
-      queueTimeoutRef.current = null;
-    }
-    
-    setIsTranslating(false);
-    setTranslationQueue([]);
-    setIsPlaying(false);
-    setCurrentSign(signs[nextIndex]);
-  };
+    queueManager.clear(true);
+    setCurrentSign(nextSignName);
+  }, [currentSign, signs, queueManager]);
 
-  const prevSign = () => {
+  const prevSign = useCallback(() => {
     const currentIndex = signs.indexOf(currentSign);
     const prevIndex = currentIndex === 0 ? signs.length - 1 : currentIndex - 1;
+    const prevSignName = signs[prevIndex];
     
-    if (queueTimeoutRef.current) {
-      clearTimeout(queueTimeoutRef.current);
-      queueTimeoutRef.current = null;
-    }
-    
-    setIsTranslating(false);
-    setTranslationQueue([]);
-    setIsPlaying(false);
-    setCurrentSign(signs[prevIndex]);
-  };
+    queueManager.clear(true);
+    setCurrentSign(prevSignName);
+  }, [currentSign, signs, queueManager]);
 
-  const selectSign = (signKey) => {
-    if (queueTimeoutRef.current) {
-      clearTimeout(queueTimeoutRef.current);
-      queueTimeoutRef.current = null;
-    }
-    
-    setIsTranslating(false);
-    setTranslationQueue([]);
-    setIsPlaying(false);
+  const selectSign = useCallback((signKey) => {
+    queueManager.clear(true);
     setCurrentSign(signKey);
-  };
+    setError(null);
+  }, [queueManager]);
+
+  // Handle avatar state changes
+  const handleAvatarStateChange = useCallback((state, data) => {
+    setAvatarState(state);
+    if (state === 'error' && data?.error) {
+      setError(`Avatar error: ${data.error}`);
+    }
+  }, []);
+
+  // Handle video completion
+  const handleVideoComplete = useCallback((signName) => {
+    console.log('🎬 Video completed:', signName);
+  }, []);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (queueTimeoutRef.current) {
-        clearTimeout(queueTimeoutRef.current);
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
       }
+      queueManager.stop();
     };
-  }, []);
+  }, [queueManager]);
 
   return (
     <div className="module-card card-speech-to-sign">
@@ -361,41 +323,100 @@ const SpeechToSignModule = () => {
           Speech to Sign Translation
         </h2>
         <div className="card-controls">
-          {isPlaying && (
-            <div className="playing-indicator">
-              <Play size={14} />
-              Playing
+          {/* Queue status indicator */}
+          {queueStatus && (
+            <div className="queue-status-indicator">
+              <span className="queue-progress">
+                {Math.round(queueStatus.percentage)}%
+              </span>
+              <span className="queue-count">
+                ({queueStatus.current}/{queueStatus.total})
+              </span>
             </div>
           )}
+          
+          {/* Avatar state indicator */}
+          <div className={`avatar-state-indicator state-${avatarState}`}>
+            {avatarState === 'signing' && <Play size={14} />}
+            {avatarState === 'loading' && <div className="loading-spinner" />}
+            {avatarState === 'error' && <AlertCircle size={14} />}
+            <span className="state-text">
+              {avatarState.charAt(0).toUpperCase() + avatarState.slice(1)}
+            </span>
+          </div>
         </div>
       </div>
 
-      {/* 3D Avatar Display */}
+      {/* Enhanced Avatar Display */}
       <div className="avatar-container">
-        <VideoBasedAvatar 
-          currentSign={currentSign} 
-          isPlaying={isPlaying}
-        />
+        <ErrorBoundary>
+          <EnhancedVideoAvatar 
+            currentSign={currentSign} 
+            isPlaying={isPlaying}
+            onVideoComplete={handleVideoComplete}
+            onStateChange={handleAvatarStateChange}
+            debugMode={process.env.NODE_ENV === 'development'}
+          />
+        </ErrorBoundary>
       </div>
 
-      {/* Controls */}
-      <Controls 
-        isPlaying={isPlaying}
-        onPlay={playAnimation}
-        onPause={pauseAnimation}
-        onNext={nextSign}
-        onPrev={prevSign}
-        currentSign={currentSign}
-        animationTime={0}
-        signDatabase={{}}
-        availableSigns={signs}
-      />
+      {/* Enhanced Controls */}
+      <div className="enhanced-controls">
+        <div className="control-group">
+          <button
+            onClick={playAnimation}
+            className="btn-control btn-play"
+            disabled={isPlaying}
+            title="Play current sign"
+          >
+            <Play size={16} />
+            Play
+          </button>
+          
+          <button
+            onClick={pauseAnimation}
+            className="btn-control btn-pause"
+            disabled={!isPlaying}
+            title="Pause queue"
+          >
+            <Pause size={16} />
+            Pause
+          </button>
+          
+          <button
+            onClick={stopAnimation}
+            className="btn-control btn-stop"
+            disabled={!isPlaying}
+            title="Stop and clear queue"
+          >
+            <Square size={16} />
+            Stop
+          </button>
+          
+          <button
+            onClick={prevSign}
+            className="btn-control btn-nav"
+            title="Previous sign"
+          >
+            <ChevronLeft size={16} />
+          </button>
+          
+          <button
+            onClick={nextSign}
+            className="btn-control btn-nav"
+            title="Next sign"
+          >
+            <ChevronRight size={16} />
+          </button>
+        </div>
+      </div>
 
       {/* Speech Recognition Section */}
       <div className="speech-section">
         <button
           onClick={toggleListening}
           className={`btn-speech ${isListening ? 'btn-speech-active' : 'btn-speech-inactive'}`}
+          disabled={!speechSupported}
         >
           {isListening ? <MicOff size={20} /> : <Mic size={20} />}
           {isListening ? 'Stop Listening' : 'Start Speaking'}
@@ -405,32 +426,51 @@ const SpeechToSignModule = () => {
         <div className="transcript-display">
           <div className="transcript-status">
             <span className={`status-dot ${isListening ? 'status-active' : 'status-inactive'}`} />
-            {isListening ? 'Listening...' : 'Click to start speaking'}
+            {isListening ? 'Listening...' : speechSupported ? 'Click to start speaking' : 'Speech not supported'}
           </div>
           
           <div className="transcript-content">
             {(finalTranscript + transcript) || 'Your speech will appear here...'}
           </div>
 
-          {/* Translation Queue Status */}
-          {isTranslating && translationQueue.length > 0 && (
-            <div className="translation-status">
-              <span className="translation-label">
-                Translating: {currentQueueIndex + 1}/{translationQueue.length}
-              </span>
-              <div className="translation-queue">
-                {translationQueue.map((sign, index) => (
-                  <span 
-                    key={index}
-                    className={`queue-sign ${index === currentQueueIndex ? 'queue-sign-active' : ''}`}
-                  >
-                    {sign.replace('_', ' ')}
-                  </span>
-                ))}
+          {/* Queue Status Display */}
+          {queueStatus && queueStatus.total > 0 && (
+            <div className="queue-status-display">
+              <div className="queue-header">
+                <span className="queue-label">
+                  Processing Queue: {queueStatus.current}/{queueStatus.total}
+                </span>
+                <div className="queue-progress-bar">
+                  <div 
+                    className="queue-progress-fill" 
+                    style={{ width: `${queueStatus.percentage}%` }}
+                  />
+                </div>
               </div>
+              
+              {queueStatus.remainingTime && (
+                <div className="queue-eta">
+                  ETA: {Math.round(queueStatus.remainingTime / 1000)}s
+                </div>
+              )}
             </div>
           )}
         </div>
+
+        {/* Error Display */}
+        {error && (
+          <div className="error-display">
+            <AlertCircle size={16} />
+            <span>{error}</span>
+            <button 
+              onClick={() => setError(null)} 
+              className="error-dismiss"
+              title="Dismiss error"
+            >
+              ×
+            </button>
+          </div>
+        )}
 
         {/* Quick Sign Selector */}
         <div className="sign-selector">
@@ -448,7 +488,7 @@ const SpeechToSignModule = () => {
           <div className="word-buttons">
             <div className="button-grid">
               {(showAllSigns ? signs : signs.filter(sign => 
-                ['Hello', 'Thank_You', 'Yes', 'No', 'Help', 'Good', 'Love', 'Friend'].includes(sign)
+                ['Hello', 'Thank_You', 'Yes', 'Help', 'Good', 'Love', 'Friend', 'Sorry'].includes(sign)
               )).map(sign => (
                 <button
                   key={sign}

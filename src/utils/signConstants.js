@@ -1,6 +1,6 @@
-// src/utils/signConstants.js - Shared constants and mappings
+// src/utils/signConstants.js - Updated constants without missing videos
 
-// Complete list of available signs with proper video mappings
+// Complete list of available signs with proper video mappings (removed No and Please)
 export const AVAILABLE_SIGNS = [
   // Numbers
   '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
@@ -15,10 +15,10 @@ export const AVAILABLE_SIGNS = [
   'Go', 'Come', 'Stay', 'Walk', 'See', 'Look', 'Talk', 'Say', 'Ask', 'Eat', 'Drink',
   'Sleep', 'Sad', 'Angry', 'Love', 'Like', 'Want', 'Need', 'Have', 'Do',
   'Does_Not', 'Do_Not', 'Cannot', 'Will', 'Can', 'Be', 'Am', 'Is', 'Are', 'Was',
-  'Please', 'Sorry', 'Excuse_Me', 'Yes', 'No', 'Maybe', 'Friend', 'Family'
+  'Sorry', 'Excuse_Me', 'Yes', 'Maybe', 'Friend', 'Family'
 ];
 
-// Speech-to-Sign mapping (handles spaces and underscores)
+// Speech-to-Sign mapping (handles spaces and underscores) - removed missing videos
 export const SPEECH_TO_SIGN_MAPPING = {
   'hello': 'Hello',
   'hi': 'Hello',
@@ -90,24 +90,22 @@ export const SPEECH_TO_SIGN_MAPPING = {
   'is': 'Is',
   'are': 'Are',
   'was': 'Was',
-  'please': 'Please',
   'sorry': 'Sorry',
   'excuse me': 'Excuse_Me',
   'yes': 'Yes',
-  'no': 'No',
   'maybe': 'Maybe',
   'friend': 'Friend',
   'family': 'Family'
 };
 
-// Quick access signs for the selector
+// Quick access signs for the selector (removed missing videos)
 export const QUICK_SIGNS = [
-  'Hello', 'Thank_You', 'Yes', 'No', 'Help', 'Good', 'Love', 'Friend', 'Please', 'Sorry'
+  'Hello', 'Thank_You', 'Yes', 'Help', 'Good', 'Love', 'Friend', 'Sorry'
 ];
 
-// Mock signs for detection simulation
+// Mock signs for detection simulation (removed missing videos)
 export const MOCK_DETECTION_SIGNS = [
-  'Hello', 'Thank_You', 'Yes', 'No', 'Help', 'Good', 'Love', 'Please'
+  'Hello', 'Thank_You', 'Yes', 'Help', 'Good', 'Love'
 ];
 
 // Multi-word phrase patterns
