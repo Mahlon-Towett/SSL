@@ -41,7 +41,7 @@ const SignToTextModule = () => {
   
   // Configuration
   const CONFIG = {
-    WEBSOCKET_URL: 'ws://localhost:8765',
+    WEBSOCKET_URL: 'ws://192.168.1.130:8765',
     FRAME_RATE: 300, // Send frame every 300ms (3.3 FPS) - less aggressive
     RECONNECT_INTERVAL: 5000, // Wait 5 seconds before reconnecting
     CANVAS_SIZE: { width: 640, height: 480 },

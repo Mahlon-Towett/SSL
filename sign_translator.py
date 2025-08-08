@@ -403,7 +403,7 @@ class WebFedSignLanguageRecognizer:
             
             server = await websockets.serve(
                 self.websocket_handler,
-                "localhost",
+                "0.0.0.0",
                 8765,  # WebSocket port
                 ping_interval=30,
                 ping_timeout=20,
