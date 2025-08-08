@@ -1,660 +1,460 @@
-// src/components/EnhancedVideoAvatar.jsx - New improved video avatar with state management
-
-import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import * as THREE from 'three';
-import VideoPoolManager from '../utils/VideoPoolManager';
-import AvatarStateMachine, { AvatarStates } from '../utils/AvatarStateMachine';
-import { VIDEO_MAPPINGS, PRIORITY_SIGNS, getVideoPath, hasVideo } from '../constants/videoMappings';
+// src/components/EnhancedVideoAvatar.jsx - FIXED to actually play videos
+import React, { useRef, useEffect, useState, useCallback } from 'react';
 
 const EnhancedVideoAvatar = ({ 
   currentSign = 'Hello', 
   isPlaying = false, 
   onVideoComplete,
   onStateChange,
-  debugMode = false 
+  debugMode = false,
+  fastMode = false,
+  transitionSpeed = 'normal'
 }) => {
   // Refs
-  const mountRef = useRef(null);
-  const sceneRef = useRef(null);
-  const animationRef = useRef(null);
-  const currentVideoRef = useRef(null);
-  const cleanupRef = useRef(null);
+  const videoRef = useRef(null);
+  const containerRef = useRef(null);
 
   // State
   const [videoLoaded, setVideoLoaded] = useState(false);
-  const [videoDuration, setVideoDuration] = useState(0);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [preloadStatus, setPreloadStatus] = useState({ loaded: 0, total: 0, percentage: 0 });
-  const [avatarState, setAvatarState] = useState(AvatarStates.NEUTRAL);
-  const [error, setError] = useState(null);
+  const [videoError, setVideoError] = useState(null);
+  const [currentVideoPath, setCurrentVideoPath] = useState('');
+  const [videoState, setVideoState] = useState('neutral');
 
-  // Managers (created once)
-  const videoPoolManager = useMemo(() => new VideoPoolManager(), []);
-  const avatarStateMachine = useMemo(() => new AvatarStateMachine({
-    debugMode,
-    transitionInDuration: 300,
-    transitionOutDuration: 200,
-    signDuration: 2500,
-    interSignDelay: 150
-  }), [debugMode]);
-
+  // Debug logger
   const log = useCallback((message, data = null) => {
     if (debugMode) {
-      console.log(`[EnhancedAvatar] ${message}`, data || '');
+      console.log(`[VideoAvatar] ${message}`, data || '');
     }
   }, [debugMode]);
 
-  // Initialize Three.js scene
-  useEffect(() => {
-    if (!mountRef.current) return;
-
-    log('🎬 Initializing Three.js scene');
-
-    let mounted = true;
-
-    // Clear previous content safely
-    while (mountRef.current.firstChild) {
-      mountRef.current.removeChild(mountRef.current.firstChild);
-    }
-
-    // Scene setup
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(45, 500/400, 0.1, 1000);
-    const renderer = new THREE.WebGLRenderer({ 
-      antialias: true,
-      alpha: true,
-      preserveDrawingBuffer: true
-    });
-    
-    renderer.setSize(500, 400);
-    renderer.setClearColor(0x1a1a1a, 1);
-    renderer.shadowMap.enabled = true;
-    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.0;
-    
-    // Only append if still mounted
-    if (mounted && mountRef.current) {
-      mountRef.current.appendChild(renderer.domElement);
-    }
-
-    // Professional lighting setup
-    const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
-    scene.add(ambientLight);
-    
-    const keyLight = new THREE.DirectionalLight(0xffffff, 1.2);
-    keyLight.position.set(2, 4, 3);
-    keyLight.castShadow = true;
-    keyLight.shadow.mapSize.width = 2048;
-    keyLight.shadow.mapSize.height = 2048;
-    scene.add(keyLight);
-
-    const fillLight = new THREE.DirectionalLight(0x87CEEB, 0.4);
-    fillLight.position.set(-2, 2, 1);
-    scene.add(fillLight);
-
-    // Position camera
-    camera.position.set(0, 0, 3);
-    camera.lookAt(0, 0, 0);
-
-    // Store references
-    sceneRef.current = { scene, camera, renderer, mounted };
-
-    // Cleanup function
-    const cleanup = () => {
-      log('🧹 Cleaning up Three.js scene');
-      mounted = false;
-      
-      // Clean up video
-      if (currentVideoRef.current) {
-        try {
-          currentVideoRef.current.pause();
-          currentVideoRef.current.src = '';
-          currentVideoRef.current.load();
-        } catch (e) {
-          console.warn('Video cleanup warning:', e);
-        }
-        currentVideoRef.current = null;
-      }
-      
-      // Clean up Three.js
-      try {
-        // Dispose of all scene objects
-        scene.traverse((object) => {
-          if (object.geometry) {
-            object.geometry.dispose();
-          }
-          if (object.material) {
-            if (Array.isArray(object.material)) {
-              object.material.forEach(material => {
-                if (material.map) material.map.dispose();
-                material.dispose();
-              });
-            } else {
-              if (object.material.map) object.material.map.dispose();
-              object.material.dispose();
-            }
-          }
-        });
-        
-        // Clear scene
-        scene.clear();
-        
-        // Remove renderer DOM element safely
-        if (renderer.domElement && renderer.domElement.parentNode) {
-          renderer.domElement.parentNode.removeChild(renderer.domElement);
-        }
-        
-        // Dispose renderer
-        renderer.dispose();
-      } catch (e) {
-        console.warn('Three.js cleanup warning:', e);
-      }
-      
-      // Clear reference
-      if (sceneRef.current) {
-        sceneRef.current.mounted = false;
-      }
-    };
-
-    cleanupRef.current = cleanup;
-    return cleanup;
+  // Get video path for sign
+  const getVideoPath = useCallback((signName) => {
+    // Map sign names to video files in public/videos/ folder
+    const videoPath = `./videos/${signName}.mp4`;
+    log(`Getting video path for ${signName}: ${videoPath}`);
+    return videoPath;
   }, [log]);
 
-  // Preload critical videos on mount
-  useEffect(() => {
-    let isMounted = true;
+  // Load video for current sign
+  const loadVideo = useCallback(async (signName) => {
+    if (!videoRef.current) return;
 
-    const preloadCriticalVideos = async () => {
-      log('📦 Starting critical video preload');
-      
-      try {
-        // Update preload status
-        const updateStatus = () => {
-          if (isMounted) {
-            const status = videoPoolManager.getPreloadStatus();
-            setPreloadStatus(status);
-          }
-        };
-
-        // Preload in batches with status updates
-        await videoPoolManager.preloadBatch(VIDEO_MAPPINGS, PRIORITY_SIGNS);
-        updateStatus();
-
-        log('✅ Critical videos preloaded successfully');
-      } catch (error) {
-        log('❌ Critical video preload failed:', error);
-        if (isMounted) {
-          setError(`Preload failed: ${error.message}`);
-        }
-      }
-    };
-
-    preloadCriticalVideos();
-
-    return () => {
-      isMounted = false;
-    };
-  }, [videoPoolManager, log]);
-
-  // Avatar state machine integration
-  useEffect(() => {
-    const stateChangeHandler = ({ newState, data }) => {
-      log(`🤖 Avatar state changed: ${newState}`, data);
-      setAvatarState(newState);
-      onStateChange?.(newState, data);
-    };
-
-    const callbackId = avatarStateMachine.onStateChange(stateChangeHandler);
-
-    return () => {
-      avatarStateMachine.removeStateChangeCallback(callbackId);
-    };
-  }, [avatarStateMachine, onStateChange, log]);
-
-  // Create video avatar with proper resource management
-  const createVideoAvatar = useCallback(async (signName) => {
-    if (!sceneRef.current || !sceneRef.current.mounted) return null;
-
-    log(`🎭 Creating video avatar for: ${signName}`);
+    const video = videoRef.current;
+    const videoPath = getVideoPath(signName);
+    
+    log(`Loading video: ${signName} from ${videoPath}`);
+    setVideoState('loading');
+    setVideoLoaded(false);
+    setVideoError(null);
+    onStateChange?.('loading', { signName });
 
     try {
-      // Get video from pool
-      const videoPath = getVideoPath(signName);
-      const videoData = await videoPoolManager.getVideo(signName, videoPath);
+      // Smooth transition: Don't reset video immediately, let it load in background
+      const tempVideo = document.createElement('video');
+      tempVideo.src = videoPath;
+      tempVideo.preload = 'auto';
+      tempVideo.muted = true;
+      tempVideo.playsInline = true;
       
-      // Check if video actually loaded
-      if (!videoData.loaded || !videoData.element) {
-        log(`⚠️ Video not available for ${signName}, using fallback`);
-        return createFallbackAvatar(signName);
-      }
-
-      // Create a clone for playback
-      const clonedVideoData = videoPoolManager.createVideoClone(signName);
-      const video = clonedVideoData.element;
-      
-      // Clean up previous video safely
-      if (currentVideoRef.current) {
-        try {
-          currentVideoRef.current.pause();
-          currentVideoRef.current.src = '';
-          currentVideoRef.current.load();
-        } catch (e) {
-          console.warn('Previous video cleanup warning:', e);
-        }
-      }
-      currentVideoRef.current = video;
-
-      // Create Three.js components
-      const avatarGroup = new THREE.Group();
-
-      // Video texture setup
-      const videoTexture = new THREE.VideoTexture(video);
-      videoTexture.minFilter = THREE.LinearFilter;
-      videoTexture.magFilter = THREE.LinearFilter;
-      videoTexture.format = THREE.RGBAFormat;
-      videoTexture.flipY = true;
-
-      // Calculate dimensions based on video aspect ratio
-      const planeHeight = 2.5;
-      const planeWidth = planeHeight * clonedVideoData.aspectRatio;
-      
-      const videoGeometry = new THREE.PlaneGeometry(planeWidth, planeHeight);
-      const videoMaterial = new THREE.MeshBasicMaterial({ 
-        map: videoTexture,
-        transparent: true,
-        alphaTest: 0.1,
-        side: THREE.FrontSide
-      });
-      
-      const videoPlane = new THREE.Mesh(videoGeometry, videoMaterial);
-      videoPlane.position.z = 0.1;
-
-      // Professional frame
-      const frameGeometry = new THREE.PlaneGeometry(planeWidth + 0.1, planeHeight + 0.1);
-      const frameMaterial = new THREE.MeshLambertMaterial({ 
-        color: 0x2a2a2a,
-        transparent: true,
-        opacity: 0.9
-      });
-      const frame = new THREE.Mesh(frameGeometry, frameMaterial);
-      frame.position.z = 0;
-
-      // Add components to group
-      avatarGroup.add(frame);
-      avatarGroup.add(videoPlane);
-
-      // Video event handlers with safety checks
-      const handleLoadedMetadata = () => {
-        if (video === currentVideoRef.current && sceneRef.current?.mounted) {
-          setVideoLoaded(true);
-          setVideoDuration(video.duration);
+      // Load the new video in background
+      await new Promise((resolve, reject) => {
+        const handleLoadedData = () => {
+          log(`✅ Video loaded successfully: ${signName}`);
+          
+          // Smooth transition: Only now switch the source
+          video.pause();
+          video.src = videoPath;
           video.currentTime = 0;
-          log(`📹 Video metadata loaded: ${signName} (${video.duration}s)`);
-        }
-      };
+          setCurrentVideoPath(videoPath);
+          
+          // Set states after smooth transition
+          setVideoLoaded(true);
+          setVideoState('ready');
+          onStateChange?.('neutral', { signName });
+          resolve();
+        };
 
-      const handleTimeUpdate = () => {
-        if (video === currentVideoRef.current && sceneRef.current?.mounted) {
-          setCurrentTime(video.currentTime);
-        }
-      };
-
-      const handleEnded = () => {
-        if (video === currentVideoRef.current && sceneRef.current?.mounted) {
-          log(`🏁 Video playback ended: ${signName}`);
-          onVideoComplete?.(signName);
-        }
-      };
-
-      const handleError = (e) => {
-        if (video === currentVideoRef.current && sceneRef.current?.mounted) {
-          const errorMsg = `Video playback error: ${signName}`;
+        const handleError = (e) => {
+          const errorMsg = `Failed to load video: ${signName}`;
           log(`❌ ${errorMsg}`, e);
-          setError(errorMsg);
-        }
-      };
+          setVideoError(errorMsg);
+          setVideoState('error');
+          onStateChange?.('error', { signName, error: errorMsg });
+          reject(new Error(errorMsg));
+        };
 
-      video.addEventListener('loadedmetadata', handleLoadedMetadata, { once: true });
-      video.addEventListener('timeupdate', handleTimeUpdate);
-      video.addEventListener('ended', handleEnded, { once: true });
-      video.addEventListener('error', handleError, { once: true });
-
-      return avatarGroup;
+        tempVideo.addEventListener('loadeddata', handleLoadedData, { once: true });
+        tempVideo.addEventListener('error', handleError, { once: true });
+        
+        // Start loading in background
+        tempVideo.load();
+      });
 
     } catch (error) {
-      log(`❌ Failed to create video avatar: ${signName}`, error);
-      return createFallbackAvatar(signName);
+      log(`❌ Error loading video: ${signName}`, error);
+      setVideoError(error.message);
     }
-  }, [videoPoolManager, onVideoComplete, log]);
+  }, [log, getVideoPath, onStateChange]);
 
-  // Fallback avatar for missing videos
-  const createFallbackAvatar = useCallback((signName) => {
-    log(`🔄 Creating fallback avatar for: ${signName}`);
+  // Play current video with smooth start
+  const playVideo = useCallback(async () => {
+    if (!videoRef.current || !videoLoaded) {
+      log('⚠️ Cannot play - video not loaded');
+      return;
+    }
+
+    const video = videoRef.current;
     
-    const group = new THREE.Group();
+    try {
+      log(`▶️ Playing video: ${currentSign}`);
+      setVideoState('playing');
+      onStateChange?.('signing', { signName: currentSign });
+
+      // Smooth start: ensure video is at beginning but don't cause flicker
+      if (video.currentTime !== 0) {
+        video.currentTime = 0;
+      }
+      
+      // Play the video smoothly
+      await video.play();
+      
+    } catch (error) {
+      log(`❌ Error playing video: ${currentSign}`, error);
+      setVideoError(`Playback failed: ${error.message}`);
+      setVideoState('error');
+      onStateChange?.('error', { signName: currentSign, error: error.message });
+    }
+  }, [videoLoaded, currentSign, log, onStateChange]);
+
+  // Pause and smoothly return to neutral pose
+  const pauseVideo = useCallback(() => {
+    if (!videoRef.current) return;
     
-    const canvas = document.createElement('canvas');
-    const context = canvas.getContext('2d');
-    canvas.width = 512;
-    canvas.height = 512;
-
-    context.fillStyle = '#333333';
-    context.fillRect(0, 0, canvas.width, canvas.height);
+    const video = videoRef.current;
+    video.pause();
     
-    context.fillStyle = '#ffffff';
-    context.font = '48px Arial';
-    context.textAlign = 'center';
-    context.fillText(`${signName.toUpperCase()}`, canvas.width/2, canvas.height/2);
-    context.fillText('Video Not Available', canvas.width/2, canvas.height/2 + 60);
-
-    const texture = new THREE.CanvasTexture(canvas);
-    const material = new THREE.MeshBasicMaterial({ map: texture });
-    const geometry = new THREE.PlaneGeometry(2, 2);
-    const plane = new THREE.Mesh(geometry, material);
+    // Smooth transition to neutral without flicker
+    setTimeout(() => {
+      if (video.currentTime !== 0) {
+        video.currentTime = 0;
+      }
+      setVideoState('neutral');
+    }, 50); // Very short delay to prevent flicker
     
-    group.add(plane);
-    return group;
-  }, [log]);
+    log(`⏸️ Smoothly paused and returned to neutral: ${currentSign}`);
+  }, [currentSign, log]);
 
-  // Handle sign changes through state machine
-  useEffect(() => {
-    if (!currentSign || !sceneRef.current?.mounted) return;
-
-    const processSignChange = async () => {
-      try {
-        await avatarStateMachine.transitionToSign(currentSign, {
-          onLoadStart: async (signName) => {
-            log(`📡 Loading video: ${signName}`);
-            setVideoLoaded(false);
-            setError(null);
-          },
-          
-          onTransitionIn: async (signName) => {
-            if (!sceneRef.current?.mounted) return;
-            
-            log(`🎬 Transitioning to: ${signName}`);
-            
-            // Remove old avatar safely
-            if (sceneRef.current.avatarGroup) {
-              try {
-                // Dispose of old avatar resources
-                sceneRef.current.avatarGroup.traverse((object) => {
-                  if (object.geometry) object.geometry.dispose();
-                  if (object.material) {
-                    if (Array.isArray(object.material)) {
-                      object.material.forEach(mat => {
-                        if (mat.map) mat.map.dispose();
-                        mat.dispose();
-                      });
-                    } else {
-                      if (object.material.map) object.material.map.dispose();
-                      object.material.dispose();
-                    }
-                  }
-                });
-                
-                sceneRef.current.scene.remove(sceneRef.current.avatarGroup);
-                sceneRef.current.avatarGroup = null;
-              } catch (e) {
-                console.warn('Old avatar cleanup warning:', e);
-              }
-            }
-            
-            // Create and add new avatar
-            const newAvatar = await createVideoAvatar(signName);
-            if (newAvatar && sceneRef.current?.mounted) {
-              sceneRef.current.scene.add(newAvatar);
-              sceneRef.current.avatarGroup = newAvatar;
-            }
-          },
-
-          onSignStart: async (signName) => {
-            if (!sceneRef.current?.mounted) return;
-            
-            log(`▶️ Starting sign playback: ${signName}`);
-            
-            if (currentVideoRef.current && isPlaying) {
-              try {
-                currentVideoRef.current.currentTime = 0;
-                const playPromise = currentVideoRef.current.play();
-                if (playPromise) {
-                  await playPromise;
-                }
-              } catch (playError) {
-                // Ignore play errors that commonly occur during rapid transitions
-                if (playError.name !== 'AbortError' && playError.name !== 'NotAllowedError') {
-                  log(`❌ Video play failed: ${signName}`, playError);
-                  setError(`Playback failed: ${signName}`);
-                }
-              }
-            }
-          },
-
-          onSignEnd: async (signName) => {
-            if (!sceneRef.current?.mounted) return;
-            
-            log(`⏹️ Sign playback ended: ${signName}`);
-            
-            if (currentVideoRef.current) {
-              try {
-                currentVideoRef.current.pause();
-                currentVideoRef.current.currentTime = 0;
-              } catch (e) {
-                // Ignore cleanup errors during transitions
-                console.warn('Video end cleanup warning:', e);
-              }
-            }
-          }
-        });
-      } catch (error) {
-        if (sceneRef.current?.mounted) {
-          log(`❌ Sign transition failed: ${currentSign}`, error);
-          setError(`Transition failed: ${error.message}`);
+  // Handle video end - smoother transition to neutral
+  const handleVideoEnd = useCallback(() => {
+    log(`🏁 Video completed: ${currentSign}, preparing for next transition`);
+    
+    const video = videoRef.current;
+    if (video) {
+      // Smooth transition: Keep video at end frame momentarily before neutral
+      setTimeout(() => {
+        if (video && video.duration > 0) {
+          // Smooth fade to neutral: gradually go to frame 0
+          video.currentTime = 0;
+          setVideoState('neutral');
+          log('↩️ Smoothly transitioned to neutral pose');
         }
+      }, 200); // Reduced delay for smoother flow
+    }
+    
+    onStateChange?.('neutral', { signName: currentSign });
+    onVideoComplete?.(currentSign);
+  }, [currentSign, log, onStateChange, onVideoComplete]);
+
+  // Load video when sign changes
+  useEffect(() => {
+    if (currentSign) {
+      loadVideo(currentSign);
+    }
+  }, [currentSign, loadVideo]);
+
+  // Play video when isPlaying changes to true
+  useEffect(() => {
+    if (isPlaying && videoLoaded) {
+      playVideo();
+    } else if (!isPlaying && videoRef.current) {
+      pauseVideo(); // Use new pause function that returns to neutral
+    }
+  }, [isPlaying, videoLoaded, playVideo, pauseVideo]);
+
+  // Set up video event listeners with better timing detection
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    // Handle video end with proper timing - more conservative
+    const handleEnd = () => {
+      // Ensure video has fully played before transitioning
+      if (video.currentTime >= video.duration - 0.2) { // More tolerant: 0.2s vs 0.1s
+        handleVideoEnd();
       }
     };
 
-    processSignChange();
-  }, [currentSign, isPlaying, avatarStateMachine, createVideoAvatar, log]);
-
-  // Animation loop
-  useEffect(() => {
-    let animationId;
-    
-    const animate = () => {
-      if (sceneRef.current?.mounted) {
-        animationId = requestAnimationFrame(animate);
-        
-        try {
-          if (sceneRef.current.renderer && sceneRef.current.scene && sceneRef.current.camera) {
-            sceneRef.current.renderer.render(sceneRef.current.scene, sceneRef.current.camera);
-          }
-        } catch (e) {
-          console.warn('Render warning:', e);
-        }
+    // Handle timeupdate to ensure we catch the real end - more conservative
+    const handleTimeUpdate = () => {
+      if (video.currentTime >= video.duration - 0.1) { // More tolerant timing
+        video.pause();
+        handleVideoEnd();
       }
     };
-    
-    animate();
 
+    video.addEventListener('ended', handleEnd);
+    video.addEventListener('timeupdate', handleTimeUpdate);
+    
     return () => {
-      if (animationId) {
-        cancelAnimationFrame(animationId);
-      }
+      video.removeEventListener('ended', handleEnd);
+      video.removeEventListener('timeupdate', handleTimeUpdate);
     };
-  }, []);
+  }, [handleVideoEnd]);
 
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      if (sceneRef.current) {
-        sceneRef.current.mounted = false;
-      }
-      
-      if (cleanupRef.current) {
-        try {
-          cleanupRef.current();
-        } catch (e) {
-          console.warn('Cleanup warning:', e);
-        }
-      }
-      
-      try {
-        videoPoolManager.dispose();
-      } catch (e) {
-        console.warn('Video pool cleanup warning:', e);
-      }
-      
-      try {
-        avatarStateMachine.forceReset();
-      } catch (e) {
-        console.warn('State machine cleanup warning:', e);
-      }
-    };
-  }, [videoPoolManager, avatarStateMachine]);
-
-  const getStatusColor = (status) => {
-    switch (status) {
-      case AvatarStates.NEUTRAL: return '#ffaa00';
-      case AvatarStates.LOADING: return '#00aaff';
-      case AvatarStates.SIGNING: return '#00ff00';
-      case AvatarStates.ERROR: return '#ff0000';
-      default: return '#888888';
+  // Get status color based on state
+  const getStatusColor = () => {
+    switch (videoState) {
+      case 'loading': return '#f59e0b';
+      case 'ready': return '#10b981';
+      case 'playing': return '#06b6d4';
+      case 'neutral': return '#8b5cf6';
+      case 'error': return '#ef4444';
+      default: return '#6b7280';
     }
   };
 
-  const getStatusText = (status) => {
-    switch (status) {
-      case AvatarStates.NEUTRAL: return '⏸ READY';
-      case AvatarStates.LOADING: return '⏳ LOADING';
-      case AvatarStates.TRANSITIONING_IN: return '🔄 TRANSITION';
-      case AvatarStates.SIGNING: return '▶ SIGNING';
-      case AvatarStates.TRANSITIONING_OUT: return '🔄 FINISHING';
-      case AvatarStates.ERROR: return '❌ ERROR';
-      default: return '⚪ UNKNOWN';
+  // Get status text
+  const getStatusText = () => {
+    switch (videoState) {
+      case 'loading': return 'Loading';
+      case 'ready': return 'Ready';
+      case 'playing': return 'Playing';
+      case 'neutral': return 'Ready';
+      case 'error': return 'Error';
+      default: return 'Idle';
     }
   };
 
   return (
-    <div style={{ position: 'relative' }}>
-      <div 
-        ref={mountRef} 
+    <div 
+      ref={containerRef}
+      style={{
+        position: 'relative',
+        width: '500px',
+        height: '400px',
+        border: `3px solid ${getStatusColor()}`,
+        borderRadius: '16px',
+        overflow: 'hidden',
+        background: 'linear-gradient(135deg, #1a1a1a 0%, #2d2d2d 100%)',
+        boxShadow: `0 10px 40px rgba(0,0,0,0.4), 0 0 20px ${getStatusColor()}33`,
+        transition: 'all 0.3s ease'
+      }}
+    >
+      {/* Video Element with smooth transitions */}
+      <video
+        ref={videoRef}
         style={{
-          border: '3px solid #444',
-          borderRadius: '15px',
-          overflow: 'hidden',
-          display: 'inline-block',
-          boxShadow: '0 10px 40px rgba(0,0,0,0.4)',
-          background: 'linear-gradient(135deg, #2a2a2a 0%, #1a1a1a 100%)'
-        }} 
+          width: '100%',
+          height: '100%',
+          objectFit: 'cover',
+          background: '#000',
+          transition: 'opacity 0.15s ease-in-out', // Smooth opacity transition
+          opacity: videoState === 'loading' ? 0.7 : 1 // Slight fade during loading
+        }}
+        muted
+        playsInline
+        preload="auto"
       />
       
-      {/* Status indicators */}
-      <div style={{
-        position: 'absolute',
-        top: '10px',
-        left: '10px',
-        background: 'rgba(0,0,0,0.8)',
-        color: getStatusColor(avatarState),
-        padding: '5px 10px',
-        borderRadius: '5px',
-        fontSize: '12px',
-        fontFamily: 'monospace',
-        fontWeight: 'bold'
-      }}>
-        {getStatusText(avatarState)}
-      </div>
-
-      {/* Current sign indicator */}
-      <div style={{
-        position: 'absolute',
-        top: '10px',
-        right: '10px',
-        background: 'rgba(0,0,0,0.8)',
-        color: '#ffffff',
-        padding: '5px 10px',
-        borderRadius: '5px',
-        fontSize: '12px',
-        fontFamily: 'monospace'
-      }}>
-        {currentSign?.replace('_', ' ') || 'None'}
-      </div>
-
-      {/* Preload progress (only show during initial loading) */}
-      {preloadStatus.total > 0 && preloadStatus.percentage < 100 && (
+      {/* Status Overlay - Only show in debug mode or for errors */}
+      {(debugMode || videoState === 'error' || videoState === 'loading') && (
         <div style={{
           position: 'absolute',
-          bottom: '10px',
-          left: '10px',
-          right: '10px',
+          top: '12px',
+          left: '12px',
           background: 'rgba(0,0,0,0.8)',
-          borderRadius: '5px',
-          padding: '5px',
-          fontSize: '11px',
+          color: getStatusColor(),
+          padding: '8px 12px',
+          borderRadius: '8px',
+          fontSize: '12px',
           fontFamily: 'monospace',
-          color: '#00ff00'
+          fontWeight: 'bold',
+          backdropFilter: 'blur(10px)',
+          border: `1px solid ${getStatusColor()}66`
         }}>
-          <div style={{ marginBottom: '3px' }}>
-            Loading: {preloadStatus.loaded}/{preloadStatus.total} ({preloadStatus.percentage}%)
-          </div>
-          <div style={{
-            width: '100%',
-            height: '3px',
-            background: '#333',
-            borderRadius: '2px',
-            overflow: 'hidden'
-          }}>
-            <div style={{
-              width: `${preloadStatus.percentage}%`,
-              height: '100%',
-              background: 'linear-gradient(90deg, #00ff00, #00aa00)',
-              transition: 'width 0.3s ease'
-            }} />
-          </div>
+          {getStatusText()}
         </div>
       )}
 
-      {/* Error display */}
-      {error && (
-        <div style={{
-          position: 'absolute',
-          bottom: '10px',
-          left: '10px',
-          right: '10px',
-          background: 'rgba(255,0,0,0.9)',
-          color: '#ffffff',
-          padding: '8px',
-          borderRadius: '5px',
-          fontSize: '11px',
-          fontFamily: 'monospace',
-          textAlign: 'center'
-        }}>
-          {error}
-        </div>
-      )}
-
-      {/* Debug info (only in debug mode) */}
+      {/* Current Sign Display - Only show in debug mode */}
       {debugMode && (
         <div style={{
           position: 'absolute',
-          top: '45px',
-          left: '10px',
+          top: '12px',
+          right: '12px',
+          background: 'rgba(0,0,0,0.8)',
+          color: '#ffffff',
+          padding: '8px 12px',
+          borderRadius: '8px',
+          fontSize: '14px',
+          fontFamily: 'monospace',
+          fontWeight: 'bold',
+          backdropFilter: 'blur(10px)',
+          border: '1px solid rgba(255,255,255,0.3)'
+        }}>
+          {currentSign?.replace('_', ' ') || 'None'}
+        </div>
+      )}
+
+      {/* Neutral Pose Indicator */}
+      {videoState === 'neutral' && videoLoaded && (
+        <div style={{
+          position: 'absolute',
+          bottom: '12px',
+          right: fastMode ? '140px' : '12px',
+          background: 'rgba(139, 92, 246, 0.9)',
+          color: '#ffffff',
+          padding: '6px 10px',
+          borderRadius: '6px',
+          fontSize: '11px',
+          fontWeight: 'bold',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '4px',
+          backdropFilter: 'blur(10px)',
+          border: '1px solid rgba(139, 92, 246, 0.6)'
+        }}>
+          🤲 Neutral Pose
+        </div>
+      )}
+      {fastMode && (
+        <div style={{
+          position: 'absolute',
+          bottom: '12px',
+          left: '12px',
+          background: 'rgba(16, 185, 129, 0.9)',
+          color: '#ffffff',
+          padding: '4px 8px',
+          borderRadius: '6px',
+          fontSize: '10px',
+          fontWeight: 'bold',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '4px'
+        }}>
+          ⚡ {transitionSpeed.toUpperCase()} MODE
+        </div>
+      )}
+
+      {/* Error Display */}
+      {videoError && (
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'rgba(0,0,0,0.9)',
+          color: '#ef4444',
+          padding: '20px',
+          textAlign: 'center'
+        }}>
+          <div style={{
+            fontSize: '48px',
+            marginBottom: '16px'
+          }}>
+            ❌
+          </div>
+          <h3 style={{
+            margin: '0 0 8px 0',
+            fontSize: '18px',
+            fontWeight: 'bold'
+          }}>
+            {currentSign?.toUpperCase() || 'ERROR'}
+          </h3>
+          <p style={{
+            margin: 0,
+            fontSize: '14px',
+            opacity: 0.8,
+            maxWidth: '300px'
+          }}>
+            {videoError}
+          </p>
+          <p style={{
+            margin: '12px 0 0 0',
+            fontSize: '12px',
+            opacity: 0.6
+          }}>
+            Check: {currentVideoPath}
+          </p>
+        </div>
+      )}
+
+      {/* Loading Display */}
+      {videoState === 'loading' && (
+        <div style={{
+          position: 'absolute',
+          inset: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'rgba(0,0,0,0.8)',
+          color: '#f59e0b'
+        }}>
+          <div style={{
+            width: '40px',
+            height: '40px',
+            border: '4px solid transparent',
+            borderTop: '4px solid #f59e0b',
+            borderRadius: '50%',
+            animation: 'spin 1s linear infinite',
+            marginBottom: '16px'
+          }} />
+          <p style={{
+            margin: 0,
+            fontSize: '16px',
+            fontWeight: 'bold'
+          }}>
+            Loading {currentSign}...
+          </p>
+        </div>
+      )}
+
+      {/* Debug Info */}
+      {debugMode && (
+        <div style={{
+          position: 'absolute',
+          bottom: '12px',
+          right: '12px',
           background: 'rgba(0,0,0,0.9)',
           color: '#00ff00',
           padding: '8px',
-          borderRadius: '5px',
+          borderRadius: '6px',
           fontSize: '10px',
           fontFamily: 'monospace',
-          maxWidth: '200px'
+          maxWidth: '200px',
+          lineHeight: '1.3'
         }}>
-          <div>Duration: {videoDuration.toFixed(1)}s</div>
-          <div>Time: {currentTime.toFixed(1)}s</div>
-          <div>Pool: {videoPoolManager.getMemoryStats().loadedVideos} loaded</div>
-          <div>State: {avatarState}</div>
+          <div>Sign: {currentSign}</div>
+          <div>State: {videoState}</div>
+          <div>Loaded: {videoLoaded ? 'Yes' : 'No'}</div>
+          <div>Playing: {isPlaying ? 'Yes' : 'No'}</div>
+          <div>Fast: {fastMode ? 'Yes' : 'No'}</div>
+          <div>Speed: {transitionSpeed}</div>
+          <div>Neutral: {videoState === 'neutral' ? 'Yes' : 'No'}</div>
+          {videoError && <div style={{color: '#ff4444'}}>Error: {videoError}</div>}
         </div>
       )}
+
+      {/* CSS Animation Styles */}
+      <style jsx>{`
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
     </div>
   );
 };

@@ -1,4 +1,4 @@
-// src/utils/SignQueueManager.js - Advanced queue management for sign sequences
+// src/utils/SignQueueManager.js - OPTIMIZED for faster, smoother transitions
 
 export class SignQueueManager {
   constructor(avatarStateMachine, options = {}) {
@@ -9,14 +9,22 @@ export class SignQueueManager {
     this.currentIndex = 0;
     this.processPromise = null;
     
-    // Configuration
+    // BALANCED Configuration for complete sign playback
     this.options = {
       autoStart: options.autoStart !== false,
       pauseOnError: options.pauseOnError !== false,
-      maxRetries: options.maxRetries || 2,
-      retryDelay: options.retryDelay || 1000,
-      interSignDelay: options.interSignDelay || 200,
+      maxRetries: options.maxRetries || 1, // Keep fast retry
+      retryDelay: options.retryDelay || 300, // Quick retries
+      interSignDelay: options.interSignDelay || 250, // BALANCED: 250ms vs 100ms for complete playback
       debugMode: options.debugMode || false,
+      
+      // BALANCED: Advanced timing controls for complete playback
+      transitionOverlap: options.transitionOverlap || 0, // No overlap to ensure complete playback
+      preloadNext: options.preloadNext !== false, // Keep preloading
+      skipTransitionDelays: options.skipTransitionDelays || false, // Don't skip delays
+      batchMode: options.batchMode || false, // Process multiple signs as batch
+      completePlayback: options.completePlayback !== false, // NEW: Ensure complete playback
+      
       ...options
     };
 
@@ -33,32 +41,45 @@ export class SignQueueManager {
       ...options.callbacks
     };
 
+    // OPTIMIZATION: Preloading cache
+    this.preloadCache = new Map();
+    this.isPreloading = false;
+
     if (this.options.debugMode) {
-      this.log('🎭 SignQueueManager initialized', this.options);
+      this.log('🚀 OPTIMIZED SignQueueManager initialized', this.options);
     }
   }
 
   log(message, data = null) {
     if (this.options.debugMode) {
-      console.log(`[SignQueue] ${message}`, data || '');
+      console.log(`[FastQueue] ${message}`, data || '');
     }
   }
 
   /**
-   * Add single sign to queue
+   * OPTIMIZED: Add single sign with immediate preloading
    */
   addSign(signName, options = {}) {
     const queueItem = {
       id: Math.random().toString(36).substring(2),
       signName,
-      options,
+      options: {
+        ...options,
+        fastMode: true, // Enable optimizations
+        skipTransitions: this.queue.length > 3, // Skip transitions for long queues
+      },
       retryCount: 0,
       status: 'pending',
       timestamp: Date.now()
     };
 
     this.queue.push(queueItem);
-    this.log(`➕ Added sign to queue: ${signName} (${this.queue.length} total)`);
+    this.log(`⚡ Added sign to queue: ${signName} (${this.queue.length} total)`);
+
+    // OPTIMIZATION: Immediate preload for next items
+    if (this.options.preloadNext && this.queue.length <= 3) {
+      this._preloadSign(signName);
+    }
 
     if (this.options.autoStart && !this.isProcessing && !this.isPaused) {
       this.start();
@@ -68,22 +89,73 @@ export class SignQueueManager {
   }
 
   /**
-   * Add multiple signs to queue
+   * OPTIMIZED: Add multiple signs with batch processing
    */
   addSigns(signNames, options = {}) {
     const ids = [];
     const batchOptions = {
       batchId: Math.random().toString(36).substring(2),
+      batchMode: true,
+      fastTransitions: signNames.length > 2, // Enable fast mode for multiple signs
       ...options
     };
+
+    // Process as batch for better performance
+    if (signNames.length > 2) {
+      batchOptions.interSignDelay = 50; // Even faster for batches
+      batchOptions.skipTransitionDelays = true;
+    }
 
     for (const signName of signNames) {
       const id = this.addSign(signName, batchOptions);
       ids.push(id);
     }
 
-    this.log(`➕ Added sign batch: [${signNames.join(', ')}] (${ids.length} signs)`);
+    this.log(`⚡ Added FAST sign batch: [${signNames.join(', ')}] (${ids.length} signs)`);
+    
+    // OPTIMIZATION: Preload entire batch
+    this._preloadBatch(signNames);
+    
     return ids;
+  }
+
+  /**
+   * OPTIMIZATION: Preload videos for smoother playback
+   */
+  async _preloadSign(signName) {
+    if (this.preloadCache.has(signName) || this.isPreloading) {
+      return;
+    }
+
+    this.isPreloading = true;
+    try {
+      // Trigger avatar system to preload this sign
+      if (this.avatarStateMachine && this.avatarStateMachine.preloadSign) {
+        await this.avatarStateMachine.preloadSign(signName);
+        this.preloadCache.set(signName, true);
+        this.log(`📦 Preloaded: ${signName}`);
+      }
+    } catch (error) {
+      this.log(`⚠️ Preload failed: ${signName}`, error);
+    } finally {
+      this.isPreloading = false;
+    }
+  }
+
+  /**
+   * OPTIMIZATION: Preload multiple signs in batch
+   */
+  async _preloadBatch(signNames) {
+    const uniqueSigns = [...new Set(signNames)];
+    this.log(`📦 Batch preloading: ${uniqueSigns.length} signs`);
+    
+    const preloadPromises = uniqueSigns.map(signName => 
+      this._preloadSign(signName).catch(error => 
+        this.log(`⚠️ Batch preload failed: ${signName}`, error)
+      )
+    );
+    
+    await Promise.all(preloadPromises);
   }
 
   /**
@@ -94,6 +166,7 @@ export class SignQueueManager {
     
     this.queue = [];
     this.currentIndex = 0;
+    this.preloadCache.clear(); // Clear preload cache
 
     if (stopCurrent && this.isProcessing) {
       this.stop();
@@ -101,7 +174,7 @@ export class SignQueueManager {
   }
 
   /**
-   * Start processing the queue
+   * OPTIMIZED: Start processing with fast mode detection
    */
   async start() {
     if (this.isProcessing) {
@@ -114,16 +187,27 @@ export class SignQueueManager {
       return;
     }
 
-    this.log(`🚀 Starting queue processing (${this.queue.length} items)`);
+    // OPTIMIZATION: Detect if we should use fast mode
+    const shouldUseFastMode = this.queue.length > 2 || 
+                             this.queue.some(item => item.options.batchMode);
+
+    if (shouldUseFastMode) {
+      this.log(`⚡ FAST MODE activated for ${this.queue.length} items`);
+      this.options.interSignDelay = 50; // Super fast
+      this.options.skipTransitionDelays = true;
+    }
+
+    this.log(`🚀 Starting OPTIMIZED queue processing (${this.queue.length} items)`);
     this.isProcessing = true;
     this.isPaused = false;
 
     this._triggerEvent('onQueueStart', {
       queueLength: this.queue.length,
+      fastMode: shouldUseFastMode,
       timestamp: Date.now()
     });
 
-    this.processPromise = this._processQueue();
+    this.processPromise = this._processQueueOptimized();
     
     try {
       const result = await this.processPromise;
@@ -134,102 +218,9 @@ export class SignQueueManager {
   }
 
   /**
-   * Pause queue processing
+   * OPTIMIZED: Main queue processing with overlapping and preloading
    */
-  pause() {
-    if (!this.isProcessing || this.isPaused) {
-      this.log('⚠️ Queue not running or already paused');
-      return;
-    }
-
-    this.log('⏸️ Pausing queue processing');
-    this.isPaused = true;
-
-    this._triggerEvent('onQueuePause', {
-      currentIndex: this.currentIndex,
-      remaining: this.queue.length - this.currentIndex,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * Resume queue processing
-   */
-  resume() {
-    if (!this.isPaused) {
-      this.log('⚠️ Queue not paused');
-      return;
-    }
-
-    this.log('▶️ Resuming queue processing');
-    this.isPaused = false;
-
-    this._triggerEvent('onQueueResume', {
-      currentIndex: this.currentIndex,
-      remaining: this.queue.length - this.currentIndex,
-      timestamp: Date.now()
-    });
-  }
-
-  /**
-   * Stop queue processing
-   */
-  async stop() {
-    this.log('⏹️ Stopping queue processing');
-    
-    this.isProcessing = false;
-    this.isPaused = false;
-
-    // Stop avatar state machine
-    if (this.avatarStateMachine) {
-      await this.avatarStateMachine.stop();
-    }
-
-    if (this.processPromise) {
-      await this.processPromise;
-    }
-  }
-
-  /**
-   * Get current queue status
-   */
-  getStatus() {
-    const pending = this.queue.filter(item => item.status === 'pending').length;
-    const completed = this.queue.filter(item => item.status === 'completed').length;
-    const failed = this.queue.filter(item => item.status === 'failed').length;
-    const processing = this.queue.filter(item => item.status === 'processing').length;
-
-    return {
-      isProcessing: this.isProcessing,
-      isPaused: this.isPaused,
-      currentIndex: this.currentIndex,
-      totalItems: this.queue.length,
-      progress: this.queue.length > 0 ? (this.currentIndex / this.queue.length) * 100 : 0,
-      items: {
-        pending,
-        processing,
-        completed,
-        failed
-      },
-      currentSign: this.getCurrentSign(),
-      remainingTime: this._estimateRemainingTime()
-    };
-  }
-
-  /**
-   * Get currently processing sign
-   */
-  getCurrentSign() {
-    if (this.currentIndex < this.queue.length) {
-      return this.queue[this.currentIndex];
-    }
-    return null;
-  }
-
-  /**
-   * Internal queue processing logic
-   */
-  async _processQueue() {
+  async _processQueueOptimized() {
     const startTime = Date.now();
     let successCount = 0;
     let errorCount = 0;
@@ -238,13 +229,15 @@ export class SignQueueManager {
       while (this.currentIndex < this.queue.length && this.isProcessing) {
         // Handle pause
         while (this.isPaused && this.isProcessing) {
-          await this._wait(100);
+          await this._wait(50); // Faster pause checking
         }
 
         if (!this.isProcessing) break;
 
         const currentItem = this.queue[this.currentIndex];
-        this.log(`🎬 Processing item ${this.currentIndex + 1}/${this.queue.length}: ${currentItem.signName}`);
+        const nextItem = this.queue[this.currentIndex + 1];
+        
+        this.log(`⚡ FAST processing ${this.currentIndex + 1}/${this.queue.length}: ${currentItem.signName}`);
 
         currentItem.status = 'processing';
         currentItem.startTime = Date.now();
@@ -256,15 +249,28 @@ export class SignQueueManager {
         });
 
         try {
-          // Process the sign through avatar state machine
-          await this.avatarStateMachine.transitionToSign(currentItem.signName, {
+          // OPTIMIZATION: Preload next sign while processing current
+          if (nextItem && this.options.preloadNext) {
+            this._preloadSign(nextItem.signName).catch(() => {}); // Don't wait
+          }
+
+          // OPTIMIZED: Use fast transition options
+          const transitionOptions = {
             ...currentItem.options,
+            fastMode: true,
+            skipTransitions: currentItem.options.skipTransitions || this.options.skipTransitionDelays,
+            preloaded: this.preloadCache.has(currentItem.signName),
             queueContext: {
               index: this.currentIndex,
               total: this.queue.length,
-              isLast: this.currentIndex === this.queue.length - 1
+              isLast: this.currentIndex === this.queue.length - 1,
+              hasNext: !!nextItem,
+              fastMode: true
             }
-          });
+          };
+
+          // Process the sign through avatar state machine
+          await this.avatarStateMachine.transitionToSign(currentItem.signName, transitionOptions);
 
           // Mark as completed
           currentItem.status = 'completed';
@@ -272,7 +278,7 @@ export class SignQueueManager {
           currentItem.duration = currentItem.endTime - currentItem.startTime;
           successCount++;
 
-          this.log(`✅ Completed: ${currentItem.signName} (${currentItem.duration}ms)`);
+          this.log(`✅ FAST completed: ${currentItem.signName} (${currentItem.duration}ms)`);
 
           this._triggerEvent('onSignComplete', {
             item: currentItem,
@@ -286,12 +292,12 @@ export class SignQueueManager {
           currentItem.error = error.message;
           currentItem.endTime = Date.now();
 
-          // Handle retries
+          // OPTIMIZED: Faster retry logic
           if (currentItem.retryCount < this.options.maxRetries) {
             currentItem.retryCount++;
             currentItem.status = 'retrying';
             
-            this.log(`🔄 Retrying ${currentItem.signName} (attempt ${currentItem.retryCount}/${this.options.maxRetries})`);
+            this.log(`🔄 Fast retry ${currentItem.signName} (${currentItem.retryCount}/${this.options.maxRetries})`);
             
             await this._wait(this.options.retryDelay);
             continue; // Don't increment currentIndex, retry same item
@@ -321,26 +327,45 @@ export class SignQueueManager {
           total: this.queue.length,
           percentage: (this.currentIndex / this.queue.length) * 100,
           successCount,
-          errorCount
+          errorCount,
+          remainingTime: this._estimateRemainingTime()
         });
 
-        // Inter-sign delay
-        if (this.currentIndex < this.queue.length && this.options.interSignDelay > 0) {
-          await this._wait(this.options.interSignDelay);
+        // OPTIMIZED: Dynamic inter-sign delay
+        if (this.currentIndex < this.queue.length) {
+          let delay = this.options.interSignDelay;
+          
+          // Skip delay for batch mode or fast sequences
+          if (currentItem.options.batchMode || this.options.skipTransitionDelays) {
+            delay = 25; // Minimal delay
+          }
+          
+          // No delay for single letters/numbers in sequence
+          if (this._isFastSequence(currentItem, nextItem)) {
+            delay = 0;
+          }
+          
+          if (delay > 0) {
+            await this._wait(delay);
+          }
         }
       }
 
       const totalTime = Date.now() - startTime;
+      const avgItemTime = totalTime / Math.max(this.currentIndex, 1);
+      
       const result = {
         completed: this.currentIndex >= this.queue.length && this.isProcessing,
         totalTime,
+        avgItemTime,
         successCount,
         errorCount,
         processedItems: this.currentIndex,
-        totalItems: this.queue.length
+        totalItems: this.queue.length,
+        throughput: (this.currentIndex / (totalTime / 1000)).toFixed(1) // items/second
       };
 
-      this.log(`🏁 Queue processing finished:`, result);
+      this.log(`🏁 OPTIMIZED queue completed:`, result);
 
       this._triggerEvent('onQueueComplete', result);
 
@@ -349,11 +374,40 @@ export class SignQueueManager {
     } finally {
       this.isProcessing = false;
       this.isPaused = false;
+      
+      // Reset optimizations
+      this.options.interSignDelay = this.options.interSignDelay || 100;
+      this.options.skipTransitionDelays = false;
     }
   }
 
   /**
-   * Estimate remaining processing time
+   * OPTIMIZATION: Check if sequence can be processed rapidly
+   */
+  _isFastSequence(currentItem, nextItem) {
+    if (!nextItem) return false;
+    
+    const current = currentItem.signName;
+    const next = nextItem.signName;
+    
+    // Single letters/numbers in sequence can be very fast
+    const isSingleChar = (str) => str.length === 1 || /^\d$/.test(str);
+    
+    if (isSingleChar(current) && isSingleChar(next)) {
+      return true;
+    }
+    
+    // Common words in sequence can also be faster
+    const commonWords = ['Hello', 'Thank_You', 'Good', 'Yes', 'Help'];
+    if (commonWords.includes(current) && commonWords.includes(next)) {
+      return true;
+    }
+    
+    return false;
+  }
+
+  /**
+   * OPTIMIZED: Faster remaining time estimation
    */
   _estimateRemainingTime() {
     if (!this.isProcessing || this.queue.length === 0) return 0;
@@ -362,12 +416,135 @@ export class SignQueueManager {
       item.status === 'completed' && item.duration
     );
 
-    if (completedItems.length === 0) return null;
+    if (completedItems.length === 0) {
+      // Use optimized estimates based on sign types
+      const remainingItems = this.queue.length - this.currentIndex;
+      const avgEstimate = 800; // Faster average for optimized processing
+      return Math.round(avgEstimate * remainingItems);
+    }
 
     const avgDuration = completedItems.reduce((sum, item) => sum + item.duration, 0) / completedItems.length;
     const remainingItems = this.queue.length - this.currentIndex;
     
-    return Math.round(avgDuration * remainingItems);
+    // Apply optimization factor
+    const optimizationFactor = 0.8; // Expect 20% faster processing
+    return Math.round(avgDuration * remainingItems * optimizationFactor);
+  }
+
+  /**
+   * Pause queue processing
+   */
+  pause() {
+    if (!this.isProcessing || this.isPaused) {
+      this.log('⚠️ Queue not running or already paused');
+      return;
+    }
+
+    this.log('⏸️ Pausing FAST queue processing');
+    this.isPaused = true;
+
+    this._triggerEvent('onQueuePause', {
+      currentIndex: this.currentIndex,
+      remaining: this.queue.length - this.currentIndex,
+      timestamp: Date.now()
+    });
+  }
+
+  /**
+   * Resume queue processing
+   */
+  resume() {
+    if (!this.isPaused) {
+      this.log('⚠️ Queue not paused');
+      return;
+    }
+
+    this.log('▶️ Resuming FAST queue processing');
+    this.isPaused = false;
+
+    this._triggerEvent('onQueueResume', {
+      currentIndex: this.currentIndex,
+      remaining: this.queue.length - this.currentIndex,
+      timestamp: Date.now()
+    });
+  }
+
+  /**
+   * Stop queue processing
+   */
+  async stop() {
+    this.log('⏹️ Stopping FAST queue processing');
+    
+    this.isProcessing = false;
+    this.isPaused = false;
+
+    // Stop avatar state machine
+    if (this.avatarStateMachine) {
+      await this.avatarStateMachine.stop();
+    }
+
+    if (this.processPromise) {
+      await this.processPromise;
+    }
+  }
+
+  /**
+   * Get current queue status with optimization info
+   */
+  getStatus() {
+    const pending = this.queue.filter(item => item.status === 'pending').length;
+    const completed = this.queue.filter(item => item.status === 'completed').length;
+    const failed = this.queue.filter(item => item.status === 'failed').length;
+    const processing = this.queue.filter(item => item.status === 'processing').length;
+
+    return {
+      isProcessing: this.isProcessing,
+      isPaused: this.isPaused,
+      currentIndex: this.currentIndex,
+      totalItems: this.queue.length,
+      progress: this.queue.length > 0 ? (this.currentIndex / this.queue.length) * 100 : 0,
+      items: {
+        pending,
+        processing,
+        completed,
+        failed
+      },
+      currentSign: this.getCurrentSign(),
+      remainingTime: this._estimateRemainingTime(),
+      
+      // OPTIMIZATION: Performance metrics
+      optimizations: {
+        preloadCacheSize: this.preloadCache.size,
+        fastModeActive: this.options.skipTransitionDelays,
+        batchModeActive: this.queue.some(item => item.options.batchMode),
+        avgProcessingTime: this._getAverageProcessingTime()
+      }
+    };
+  }
+
+  /**
+   * Get current processing performance
+   */
+  _getAverageProcessingTime() {
+    const completed = this.queue.filter(item => 
+      item.status === 'completed' && item.duration
+    );
+    
+    if (completed.length === 0) return 0;
+    
+    return Math.round(
+      completed.reduce((sum, item) => sum + item.duration, 0) / completed.length
+    );
+  }
+
+  /**
+   * Get currently processing sign
+   */
+  getCurrentSign() {
+    if (this.currentIndex < this.queue.length) {
+      return this.queue[this.currentIndex];
+    }
+    return null;
   }
 
   /**
@@ -379,7 +556,7 @@ export class SignQueueManager {
       try {
         callback(data);
       } catch (error) {
-        console.error(`[SignQueue] Event callback error (${eventName}):`, error);
+        console.error(`[FastQueue] Event callback error (${eventName}):`, error);
       }
     }
   }
@@ -427,7 +604,7 @@ export class SignQueueManager {
   }
 
   /**
-   * Get detailed debug information
+   * Get detailed debug information with optimization stats
    */
   getDebugInfo() {
     return {
@@ -437,15 +614,46 @@ export class SignQueueManager {
       queueLength: this.queue.length,
       options: this.options,
       status: this.getStatus(),
+      
+      // OPTIMIZATION: Performance debugging
+      performance: {
+        preloadCacheHits: this.preloadCache.size,
+        averageItemTime: this._getAverageProcessingTime(),
+        throughput: this._calculateThroughput(),
+        optimizationsActive: {
+          fastMode: this.options.skipTransitionDelays,
+          batchMode: this.queue.some(item => item.options.batchMode),
+          preloading: this.options.preloadNext
+        }
+      },
+      
       queue: this.queue.map(item => ({
         id: item.id,
         signName: item.signName,
         status: item.status,
         retryCount: item.retryCount,
         duration: item.duration,
-        error: item.error
+        error: item.error,
+        optimized: item.options.fastMode || false
       }))
     };
+  }
+
+  /**
+   * Calculate processing throughput
+   */
+  _calculateThroughput() {
+    const completed = this.queue.filter(item => 
+      item.status === 'completed' && item.startTime && item.endTime
+    );
+    
+    if (completed.length < 2) return 0;
+    
+    const firstStart = Math.min(...completed.map(item => item.startTime));
+    const lastEnd = Math.max(...completed.map(item => item.endTime));
+    const totalTime = (lastEnd - firstStart) / 1000; // seconds
+    
+    return totalTime > 0 ? (completed.length / totalTime).toFixed(2) : 0;
   }
 }
 
